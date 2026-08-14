@@ -14,62 +14,151 @@
       flex-direction: column;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     }
+
+    /* ---- header: tabs + controls, doubles as the panel drag handle ---- */
     #header {
       flex: none;
-      height: 26px;
+      height: 30px;
       display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 0 6px 0 12px;
-      background: #10151f;
+      align-items: stretch;
+      background: #14161d;
       border-bottom: 1px solid #232c3f;
       cursor: ns-resize;
       user-select: none;
     }
-    #header .title {
-      font-size: 11px;
-      font-weight: 600;
-      color: #8fa0c0;
-      letter-spacing: .4px;
+    #tabs {
+      display: flex;
+      flex: 1;
+      min-width: 0;
+      overflow-x: auto;
+      scrollbar-width: none;
     }
-    #close {
+    #tabs::-webkit-scrollbar { display: none; }
+    .tab {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      padding: 0 6px 0 12px;
+      font-size: 11px;
+      color: #9aa4b2;
+      background: transparent;
+      border-right: 1px solid #232c3f;
+      cursor: pointer;
+      white-space: nowrap;
+      max-width: 170px;
+    }
+    .tab .label { overflow: hidden; text-overflow: ellipsis; }
+    .tab:hover { background: #1a1e28; }
+    .tab.active { background: #0b0e14; color: #e6ecf7; }
+    .tab .close {
+      opacity: 0;
+      width: 16px; height: 16px;
+      display: inline-flex; align-items: center; justify-content: center;
+      border-radius: 4px;
+      font-size: 13px; line-height: 1;
+    }
+    .tab.active .close, .tab:hover .close { opacity: 1; }
+    .tab .close:hover { background: #2a3446; color: #fff; }
+    #controls {
+      flex: none;
+      display: flex;
+      align-items: stretch;
+      border-left: 1px solid #232c3f;
+      cursor: default;
+    }
+    #controls button {
       border: none;
       background: transparent;
-      color: #7d8aa0;
-      font-size: 12px;
-      line-height: 1;
-      padding: 4px 7px;
-      border-radius: 5px;
+      color: #9aa4b2;
+      width: 30px;
+      font-size: 13px;
       cursor: pointer;
     }
-    #close:hover { background: #1a2233; color: #e6ecf7; }
-    #term {
-      flex: 1;
-      min-height: 0;
-      position: relative;
-      padding: 6px 0 6px 10px;
-    }
-    #exitbar {
-      display: none;
-      flex: none;
-      background: #1a1216;
-      color: #ff9d9d;
-      border-top: 1px solid #43222a;
+    #controls button:hover { background: #1a1e28; color: #e6ecf7; }
+    #shellmenu-wrap { position: relative; display: flex; align-items: stretch; }
+    #shellmenu { font-size: 10px; }
+
+    /* ---- dropdown + context menu ---- */
+    .menu {
+      position: fixed;
+      z-index: 30;
+      min-width: 130px;
+      background: #1a1e28;
+      border: 1px solid #2a3446;
+      border-radius: 7px;
+      box-shadow: 0 6px 24px rgba(0, 0, 0, .5);
+      padding: 4px;
       font-size: 12px;
-      line-height: 1.6;
-      padding: 4px 12px;
+      color: #c9d4e3;
     }
+    .menu .item {
+      padding: 5px 10px;
+      border-radius: 4px;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .menu .item:hover { background: #2a3446; }
+    .menu .item.disabled { opacity: .45; cursor: default; }
+    .menu .sep { height: 1px; background: #232c3f; margin: 4px 6px; }
+
+    /* ---- search bar (Cmd/Ctrl+F) ---- */
+    #searchbar {
+      flex: none;
+      display: none;
+      align-items: center;
+      gap: 4px;
+      padding: 4px 8px;
+      background: #10151f;
+      border-bottom: 1px solid #232c3f;
+    }
+    #searchbar input {
+      flex: 1;
+      background: #0b0e14;
+      border: 1px solid #2a3446;
+      border-radius: 5px;
+      color: #c9d4e3;
+      font-size: 12px;
+      padding: 4px 8px;
+      outline: none;
+    }
+    #searchbar input:focus { border-color: #4d6bfe; }
+    #searchbar button {
+      border: 1px solid #2a3446;
+      background: transparent;
+      color: #9aa4b2;
+      width: 24px; height: 22px;
+      border-radius: 5px;
+      font-size: 11px;
+      cursor: pointer;
+    }
+    #searchbar button:hover { background: #1a1e28; color: #e6ecf7; }
+
+    /* ---- terminal area ---- */
+    #term { flex: 1; min-height: 0; position: relative; }
+    .pane { position: absolute; inset: 0; padding: 6px 0 6px 10px; }
   </style>
 </head>
 <body>
   <div id="header">
-    <span class="title">终端</span>
-    <button id="close" title="关闭终端 (Ctrl+`)">✕</button>
+    <div id="tabs"></div>
+    <div id="controls">
+      <button id="newtab" title="新建终端 (Cmd/Ctrl+T)">＋</button>
+      <div id="shellmenu-wrap">
+        <button id="shellmenu" title="选择 shell">⌄</button>
+      </div>
+    </div>
+  </div>
+  <div id="searchbar">
+    <input id="search-input" placeholder="查找（Enter 下一个 · Esc 关闭）" />
+    <button id="search-prev" title="上一个">↑</button>
+    <button id="search-next" title="下一个">↓</button>
+    <button id="search-close" title="关闭查找">✕</button>
   </div>
   <div id="term"></div>
-  <div id="exitbar"></div>
   <script src="../node_modules/@xterm/xterm/lib/xterm.js"></script>
   <script src="../node_modules/@xterm/addon-fit/lib/addon-fit.js"></script>
+  <script src="../node_modules/@xterm/addon-search/lib/addon-search.js"></script>
+  <script src="../node_modules/@xterm/addon-web-links/lib/addon-web-links.js"></script>
   <script src="./terminal.js"></script>
 </body>
 </html>

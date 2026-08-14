@@ -1,17 +1,18 @@
 /**
- * Bottom terminal panel inside the main window (Codex-style):
+ * Bottom terminal panel inside the main window (Codex/VS Code-style):
  *
- * The main window's contentView hosts two WebContentsViews:
- *   - the dsh Web GUI on top (owned by main.mjs),
- *   - the terminal panel at the bottom (owned here).
+ * The main window's contentView hosts two WebContentsViews: the dsh Web GUI on
+ * top (owned by main.mjs) and this terminal panel at the bottom. The panel
+ * renders terminal.html (xterm.js) and holds MULTIPLE shell sessions — one per
+ * tab — each backed by a real PTY (node-pty) in the main process. Tabs are
+ * created/closed from the renderer; per-tab data is routed over term:* IPC.
  *
- * The panel hosts terminal.html (xterm.js) driven by a real PTY (node-pty)
- * through the preload bridge (term:* IPC). The header bar doubles as a drag
- * handle: dragging it resizes the panel; Ctrl+` / menu / tray toggle it.
+ * The header bar doubles as a drag handle (resizes the panel); Ctrl+` / menu /
+ * tray toggle the whole panel.
  * @module dcode/terminal
  */
 
-import { ipcMain, screen, WebContentsView } from 'electron'
+import { ipcMain, screen, shell, WebContentsView } from 'electron'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -23,13 +24,17 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 const DEFAULT_HEIGHT = 250
 const MIN_HEIGHT = 120
+const BUFFER_LIMIT = 64 * 1024
+
+const SHELL_FILES = { zsh: '/bin/zsh', bash: '/bin/bash', sh: '/bin/sh' }
 
 let mainWindow = null
 let guiView = null
 let terminalView = null
-let ptyHandle = null
+let sessions = new Map() // id -> { id, pty, name, baseName, buffer, exited, exitCode }
+let nextSessionId = 1
+let activeId = null
 let termReady = false
-let pendingChunks = []
 let panelHeight = DEFAULT_HEIGHT
 let dragging = false
 let dragTimer = null
@@ -37,10 +42,10 @@ let ipcRegistered = false
 
 const clamp = (value, lo, hi) => Math.min(Math.max(value, lo), hi)
 
-/** The shell to run inside the terminal (user's default on unix, PowerShell on Windows). */
-const pickShell = () => {
-  if (process.platform === 'win32') return { file: 'powershell.exe', args: [] }
-  return { file: process.env.SHELL || '/bin/zsh', args: [] }
+const pickShell = (kind) => {
+  if (process.platform === 'win32') return 'powershell.exe'
+  if (kind === 'default') return process.env.SHELL || '/bin/zsh'
+  return SHELL_FILES[String(kind)] || process.env.SHELL || '/bin/zsh'
 }
 
 /** Lay the two views out: GUI on top, terminal panel at the bottom. */
@@ -48,7 +53,6 @@ export function layoutTerminalPanel() {
   if (mainWindow === null || mainWindow.isDestroyed() || guiView === null) return
   const [width, height] = mainWindow.getContentSize()
   if (terminalView === null) {
-    // No panel: the GUI takes the whole window.
     guiView.setBounds({ x: 0, y: 0, width, height })
     return
   }
@@ -57,21 +61,37 @@ export function layoutTerminalPanel() {
   terminalView.setBounds({ x: 0, y: height - panel, width, height: panel })
 }
 
-const killPty = () => {
-  if (ptyHandle !== null) {
-    try {
-      ptyHandle.kill()
-    } catch {
-      // Already dead is fine.
-    }
-    ptyHandle = null
+// ---------------------------------------------------------------------------
+// Shell sessions (one PTY per tab)
+// ---------------------------------------------------------------------------
+
+const sendToPanel = (channel, payload) => {
+  if (terminalView !== null && !terminalView.webContents.isDestroyed()) {
+    terminalView.webContents.send(channel, payload)
   }
 }
 
-const spawnPty = () => {
+/** VS Code-style tab name: "zsh", then "zsh (2)", "zsh (3)", … */
+const sessionNameFor = (file) => {
+  const base = path.basename(file)
+  const same = [...sessions.values()].filter((s) => s.baseName === base).length
+  return same === 0 ? base : `${base} (${same + 1})`
+}
+
+function spawnSession(kind = 'default') {
+  const file = pickShell(kind)
+  const session = {
+    id: String(nextSessionId++),
+    pty: null,
+    name: sessionNameFor(file),
+    baseName: path.basename(file),
+    buffer: [],
+    exited: false,
+    exitCode: null,
+  }
+  sessions.set(session.id, session)
   try {
-    const { file, args } = pickShell()
-    ptyHandle = spawn(file, args, {
+    session.pty = spawn(file, [], {
       name: 'xterm-256color',
       cols: 100,
       rows: 30,
@@ -79,24 +99,49 @@ const spawnPty = () => {
       env: { ...process.env, TERM: 'xterm-256color' },
     })
   } catch (error) {
-    pendingChunks.push(`终端启动失败: ${error instanceof Error ? error.message : String(error)}\r\n`)
-    return
+    session.buffer.push(`终端启动失败: ${error instanceof Error ? error.message : String(error)}\r\n`)
+    session.exited = true
   }
-  console.log(`Terminal pty started: ${pickShell().file}`)
-  ptyHandle.onData((data) => {
-    if (termReady && terminalView !== null) {
-      terminalView.webContents.send('term:data', data)
-    } else {
-      pendingChunks.push(data)
-      const buffered = pendingChunks.join('').length
-      if (buffered > 64 * 1024) pendingChunks = [pendingChunks.join('').slice(-32 * 1024)]
-    }
-  })
-  ptyHandle.onExit(({ exitCode }) => {
-    ptyHandle = null
-    if (terminalView !== null) terminalView.webContents.send('term:exit', exitCode)
-  })
+  if (session.pty !== null) {
+    session.pty.onData((data) => {
+      if (process.env.DSH_DESKTOP_TERM_TEST === '1') {
+        console.log(`[term-data #${session.id}]`, JSON.stringify(String(data).slice(0, 80)))
+      }
+      if (termReady) {
+        sendToPanel('term:data', { id: session.id, data })
+      } else {
+        session.buffer.push(data)
+        const buffered = session.buffer.join('').length
+        if (buffered > BUFFER_LIMIT) session.buffer = [session.buffer.join('').slice(-BUFFER_LIMIT / 2)]
+      }
+    })
+    session.pty.onExit(({ exitCode }) => {
+      session.exited = true
+      session.exitCode = exitCode
+      sendToPanel('term:exit', { id: session.id, code: exitCode })
+    })
+  }
+  if (activeId === null) activeId = session.id
+  if (termReady) sendToPanel('term:tab', { id: session.id, name: session.name })
+  return session
 }
+
+const killSession = (id) => {
+  const session = sessions.get(id)
+  if (session === undefined) return
+  if (session.pty !== null) {
+    try {
+      session.pty.kill()
+    } catch {
+      // Already dead is fine.
+    }
+  }
+  sessions.delete(id)
+}
+
+// ---------------------------------------------------------------------------
+// IPC
+// ---------------------------------------------------------------------------
 
 const registerIpc = () => {
   if (ipcRegistered) return
@@ -104,22 +149,44 @@ const registerIpc = () => {
   ipcMain.on('term:ready', (event) => {
     termReady = true
     console.log('Terminal renderer attached (xterm ready).')
-    if (pendingChunks.length > 0) {
-      const buffered = pendingChunks.join('')
-      pendingChunks = []
-      event.sender.send('term:data', buffered)
+    event.sender.send(
+      'term:tabs',
+      [...sessions.values()].map((s) => ({ id: s.id, name: s.name, exited: s.exited })),
+    )
+    for (const session of sessions.values()) {
+      if (session.buffer.length > 0) {
+        const buffered = session.buffer.join('')
+        session.buffer = []
+        event.sender.send('term:data', { id: session.id, data: buffered })
+      }
     }
   })
+  ipcMain.on('term:new', (_event, kind) => {
+    spawnSession(kind === undefined ? 'default' : String(kind))
+  })
+  ipcMain.on('term:activate', (_event, id) => {
+    if (sessions.has(String(id))) activeId = String(id)
+  })
+  ipcMain.on('term:close-tab', (_event, id) => {
+    killSession(String(id))
+    if (sessions.size === 0) closeTerminalPanel()
+  })
   ipcMain.on('term:input', (_event, data) => {
-    if (ptyHandle !== null) ptyHandle.write(String(data))
+    const session = sessions.get(activeId)
+    if (session !== undefined && session.pty !== null) session.pty.write(String(data))
   })
   ipcMain.on('term:resize', (_event, cols, rows) => {
-    if (ptyHandle === null) return
+    const session = sessions.get(activeId)
+    if (session === undefined || session.pty === null) return
     try {
-      ptyHandle.resize(Math.max(2, Number(cols)), Math.max(1, Number(rows)))
+      session.pty.resize(Math.max(2, Number(cols)), Math.max(1, Number(rows)))
     } catch {
       // A resize racing the exit must never take the app down.
     }
+  })
+  ipcMain.on('term:open-link', (_event, url) => {
+    const target = String(url)
+    if (/^https?:\/\//i.test(target)) void shell.openExternal(target)
   })
   ipcMain.on('term:close', () => closeTerminalPanel())
   ipcMain.on('term:drag-start', () => {
@@ -142,17 +209,22 @@ const registerIpc = () => {
   })
 }
 
+// ---------------------------------------------------------------------------
+// Panel lifecycle
+// ---------------------------------------------------------------------------
+
 /** Open the bottom terminal panel (no-op when it is already open). */
 export function openTerminalPanel(win, gui) {
   mainWindow = win
   guiView = gui
+  console.log('[terminal] openTerminalPanel called, view exists:', terminalView !== null)
   if (terminalView !== null) {
     terminalView.webContents.focus()
     return
   }
   registerIpc()
   termReady = false
-  pendingChunks = []
+  if (sessions.size === 0) spawnSession('default')
   terminalView = new WebContentsView({
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
@@ -173,21 +245,42 @@ export function openTerminalPanel(win, gui) {
     console.log('Terminal panel loaded.')
   })
   void terminalView.webContents.loadFile(path.join(__dirname, 'terminal.html'))
-  spawnPty()
   layoutTerminalPanel()
   terminalView.webContents.focus()
+
+  // Test hook: click the "+" tab button, then run a command in the second tab.
+  if (process.env.DSH_DESKTOP_TERM_TEST === '1') {
+    setTimeout(() => {
+      void terminalView.webContents.executeJavaScript(
+        "document.getElementById('newtab').click()",
+      )
+      setTimeout(() => {
+        const session = sessions.get(activeId)
+        if (session !== undefined && session.pty !== null) {
+          session.pty.write('echo SECOND_TAB_OK && exit\r')
+        }
+      }, 1200)
+    }, 3000)
+  }
 }
 
-/** Close the terminal panel, killing the shell with it. */
+/** Close the terminal panel, killing every shell session with it. */
 export function closeTerminalPanel() {
+  console.log('[terminal] closeTerminalPanel called, view exists:', terminalView !== null)
   if (terminalView === null) return
-  killPty()
+  for (const id of [...sessions.keys()]) killSession(id)
+  activeId = null
   if (mainWindow !== null && !mainWindow.isDestroyed()) {
     mainWindow.contentView.removeChildView(terminalView)
   }
+  // Deterministically tear the renderer down (GC alone is not prompt enough).
+  try {
+    terminalView.webContents.close()
+  } catch {
+    // Older Electron builds reject close() on views; GC handles it then.
+  }
   terminalView = null
   termReady = false
-  pendingChunks = []
   layoutTerminalPanel()
   if (guiView !== null) guiView.webContents.focus()
 }

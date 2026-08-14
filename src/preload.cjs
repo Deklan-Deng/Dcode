@@ -11,6 +11,18 @@
 
 const { contextBridge, ipcRenderer } = require('electron')
 
+// Channel callbacks run in the isolated world; a structured-clone failure here
+// would otherwise surface as an untraceable "An object could not be cloned".
+const subscribe = (channel) => (callback) => {
+  ipcRenderer.on(channel, (_event, payload) => {
+    try {
+      callback(payload)
+    } catch (error) {
+      console.error(`[preload] ${channel} callback failed:`, String(error))
+    }
+  })
+}
+
 contextBridge.exposeInMainWorld('dshDesktop', {
   onStatus: (callback) => {
     ipcRenderer.on('dsh:status', (_event, text) => callback(text))
@@ -20,15 +32,17 @@ contextBridge.exposeInMainWorld('dshDesktop', {
   },
   quit: () => ipcRenderer.send('dsh:quit'),
   beginUpdate: () => ipcRenderer.send('dsh:update'),
-  // Terminal window bridge (xterm.js <-> node-pty in the main process).
-  termOnData: (callback) => {
-    ipcRenderer.on('term:data', (_event, data) => callback(data))
-  },
-  termOnExit: (callback) => {
-    ipcRenderer.on('term:exit', (_event, code) => callback(code))
-  },
+  // Terminal panel bridge (xterm.js <-> node-pty sessions in the main process).
+  termOnTabs: subscribe('term:tabs'),
+  termOnTab: subscribe('term:tab'),
+  termOnData: subscribe('term:data'),
+  termOnExit: subscribe('term:exit'),
+  termNew: (kind) => ipcRenderer.send('term:new', kind),
+  termActivate: (id) => ipcRenderer.send('term:activate', id),
+  termCloseTab: (id) => ipcRenderer.send('term:close-tab', id),
   termInput: (data) => ipcRenderer.send('term:input', data),
   termResize: (cols, rows) => ipcRenderer.send('term:resize', cols, rows),
+  termOpenLink: (url) => ipcRenderer.send('term:open-link', url),
   termReady: () => ipcRenderer.send('term:ready'),
   termClose: () => ipcRenderer.send('term:close'),
   termDragStart: () => ipcRenderer.send('term:drag-start'),
