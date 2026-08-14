@@ -16,12 +16,54 @@ import { ipcMain, screen, shell, WebContentsView } from 'electron'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 import ptyModule from 'node-pty'
 
 const { spawn } = ptyModule
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
+
+/**
+ * node-pty ships a `spawn-helper` executable for macOS that its native fork
+ * runs via posix_spawnp. When the npm prebuild tarball is unpacked (npm/pnpm),
+ * that helper often LACKS the execute bit, so every `spawn()` fails with
+ * `posix_spawnp failed.` even though the shell binary exists. Restore the
+ * execute bit at load time so the terminal works regardless of how the package
+ * was installed — this runs once per launch, covers both `build/Release` and
+ * `prebuilds/<platform>-<arch>` (the two locations node-pty's native loader
+ * probes, in that order), and is a no-op when the bit is already set.
+ */
+function ensureSpawnHelperExecutable() {
+  if (process.platform === 'win32') return
+  try {
+    const require = createRequire(import.meta.url)
+    // node-pty's entry is "<root>/lib/index.js"; the prebuilds/build dirs
+    // live at the package ROOT, one level above "lib".
+    const entry = require.resolve('node-pty')
+    const ptyRoot = path.dirname(path.dirname(entry))
+    const candidates = [
+      path.join(ptyRoot, 'build', 'Release', 'spawn-helper'),
+      path.join(ptyRoot, 'build', 'Debug', 'spawn-helper'),
+      path.join(ptyRoot, 'prebuilds', `${process.platform}-${process.arch}`, 'spawn-helper'),
+    ]
+    for (const candidate of candidates) {
+      try {
+        if (!fs.existsSync(candidate)) continue
+        const stat = fs.statSync(candidate)
+        if ((stat.mode & 0o111) === 0) {
+          fs.chmodSync(candidate, stat.mode | 0o755)
+          console.log(`[terminal] restored execute bit on ${candidate}`)
+        }
+      } catch {
+        // Best-effort: never let a permission tweak stop the app.
+      }
+    }
+  } catch {
+    // node-pty resolution failed; the spawn itself will surface the real error.
+  }
+}
+ensureSpawnHelperExecutable()
 
 const DEFAULT_HEIGHT = 250
 const MIN_HEIGHT = 120
@@ -142,6 +184,8 @@ function spawnSession(kind = 'default', cwd) {
     buffer: [],
     exited: false,
     exitCode: null,
+    /** True once the renderer has created this session's tab and will accept term:data. */
+    tracked: false,
   }
   sessions.set(session.id, session)
   try {
@@ -161,7 +205,12 @@ function spawnSession(kind = 'default', cwd) {
       if (process.env.DSH_DESKTOP_TERM_TEST === '1') {
         console.log(`[term-data #${session.id}]`, JSON.stringify(String(data).slice(0, 80)))
       }
-      if (termReady) {
+      // A session's shell starts writing (the prompt) as soon as the PTY is
+      // up, often BEFORE the renderer has created its tab. Buffer until the
+      // tab exists (tracked, set on term:activate / term:ready) so the first
+      // prompt is never dropped — otherwise a freshly spawned terminal shows
+      // blank with no prompt and appears dead.
+      if (session.tracked) {
         sendToPanel('term:data', { id: session.id, data })
       } else {
         session.buffer.push(data)
@@ -193,6 +242,19 @@ const killSession = (id) => {
   sessions.delete(id)
 }
 
+/**
+ * Mark a session's tab as existing in the renderer and deliver any output the
+ * PTY produced before that tab existed (usually the first prompt). Sends
+ * nothing when the buffer is empty. Idempotent: safe on repeated activate.
+ */
+function flushSessionData(session) {
+  session.tracked = true
+  if (session.buffer.length === 0) return
+  const buffered = session.buffer.join('')
+  session.buffer = []
+  sendToPanel('term:data', { id: session.id, data: buffered })
+}
+
 // ---------------------------------------------------------------------------
 // IPC
 // ---------------------------------------------------------------------------
@@ -208,13 +270,9 @@ const registerIpc = () => {
       [...sessions.values()].map((s) => ({ id: s.id, name: s.name, exited: s.exited })),
     )
     event.sender.send('term:workspaces', readWorkspaces())
-    for (const session of sessions.values()) {
-      if (session.buffer.length > 0) {
-        const buffered = session.buffer.join('')
-        session.buffer = []
-        event.sender.send('term:data', { id: session.id, data: buffered })
-      }
-    }
+    // The renderer has created tabs for every pre-panel session now, so their
+    // buffered output (the first prompt of each) can go out.
+    for (const session of sessions.values()) flushSessionData(session)
   })
   ipcMain.on('term:new', (_event, payload) => {
     const kind = typeof payload === 'string' ? payload : payload?.kind
@@ -222,7 +280,13 @@ const registerIpc = () => {
     spawnSession(kind === undefined ? 'default' : String(kind), cwd)
   })
   ipcMain.on('term:activate', (_event, id) => {
-    if (sessions.has(String(id))) activeId = String(id)
+    const stringId = String(id)
+    if (!sessions.has(stringId)) return
+    activeId = stringId
+    // The renderer only activates a tab it has actually created, so this is
+    // the moment its buffered prompt must be flushed; flushSessionData is
+    // idempotent and cheap when empty.
+    flushSessionData(sessions.get(stringId))
   })
   ipcMain.on('term:close-tab', (_event, id) => {
     killSession(String(id))

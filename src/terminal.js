@@ -301,6 +301,11 @@
   // and createTab returns a live xterm object that cannot be cloned.
   window.dshDesktop.termOnTab(({ id, name }) => {
     createTab(id, name, false)
+    // A newly spawned session is the one the user just asked for: switch to it
+    // (VS Code / Codex behavior). Without this, createTab only auto-activates
+    // the FIRST tab (activeId === null), so every later "+" would add a hidden
+    // pane whose name sits in the tab strip while the old terminal keeps focus.
+    activate(id)
   })
   window.dshDesktop.termOnTabClosed(({ id }) => {
     removeTab(id)

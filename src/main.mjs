@@ -229,6 +229,21 @@ if (!gotLock) {
   }
 
   /**
+   * Keep the GUI view sized to the window (full width, below the header).
+   * This is app-owned and must NOT depend on terminal.mjs's module state:
+   * terminal.mjs only learns the window/view when the terminal panel is first
+   * opened, so routing the GUI resize through layoutTerminalPanel() left the
+   * view frozen at its initial bounds whenever the panel had never been opened
+   * — resizing the window then exposed dead letterbox space instead of
+   * reflowing the GUI.
+   */
+  const layoutGui = () => {
+    if (mainWindow === null || mainWindow.isDestroyed() || guiView === null) return
+    const [width, height] = mainWindow.getContentSize()
+    guiView.setBounds({ x: 0, y: CHROME_H, width, height: height - CHROME_H })
+  }
+
+  /**
    * Measure the GUI's left navigation sidebar so the terminal panel can sit
    * to its right without covering it. Best-effort: falls back to a default.
    */
@@ -321,6 +336,7 @@ if (!gotLock) {
     }, 3000)
     mainWindow.on('resize', () => {
       layoutChrome()
+      layoutGui()
       layoutTerminalPanel()
       // Debounce: re-measure the sidebar after resizing settles.
       clearTimeout(measureSidebar.debounce)
@@ -365,10 +381,7 @@ if (!gotLock) {
     })
     guiView.setBackgroundColor('#0b0e14')
     mainWindow.contentView.addChildView(guiView)
-    {
-      const [width, height] = mainWindow.getContentSize()
-      guiView.setBounds({ x: 0, y: CHROME_H, width, height: height - CHROME_H })
-    }
+    layoutGui()
     installShortcuts(guiView.webContents)
 
     // Keep the GUI inside the app: same-origin navigations load in-window,

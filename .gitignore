@@ -9,5 +9,8 @@ pack/
 .pnpm-cache/
 .corepack/
 .harness-state.json
+# pnpm artifacts (this project is managed with npm)
+pnpm-lock.yaml
+pnpm-workspace.yaml
 *.log
 .DS_Store
