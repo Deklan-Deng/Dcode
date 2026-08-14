@@ -4,7 +4,7 @@
  * @module dcode/server
  */
 
-import { spawn, execFile } from 'node:child_process'
+import { spawn, spawnSync, execFile } from 'node:child_process'
 import { once } from 'node:events'
 import fs from 'node:fs'
 import http from 'node:http'
@@ -91,6 +91,13 @@ export async function stopChild(child, log) {
     if (child.exitCode !== null || child.signalCode !== null) return true
     await Promise.race([once(child, 'exit'), delay(4000)])
     return child.exitCode !== null || child.signalCode !== null
+  }
+  if (process.platform === 'win32') {
+    // child.kill('SIGINT') is a no-op on Windows: kill the whole process tree
+    // so dsh's plugin children are never orphaned.
+    spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore' })
+    await exited()
+    return
   }
   child.kill('SIGINT')
   if (await exited()) return
