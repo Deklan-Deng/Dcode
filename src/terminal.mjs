@@ -40,6 +40,19 @@ let panelHeight = DEFAULT_HEIGHT
 let dragging = false
 let dragTimer = null
 let ipcRegistered = false
+/** Height of the custom header chrome above the GUI (set by main.mjs). */
+let chromeHeight = 0
+/** Shortcut installer shared by main.mjs (applied to this panel's webContents). */
+let shortcutHandler = null
+
+export function setChromeHeight(height) {
+  chromeHeight = Math.max(0, Number(height) || 0)
+  layoutTerminalPanel()
+}
+
+export function setShortcutHandler(handler) {
+  shortcutHandler = typeof handler === 'function' ? handler : null
+}
 
 const clamp = (value, lo, hi) => Math.min(Math.max(value, lo), hi)
 
@@ -77,16 +90,16 @@ const defaultCwd = () => {
   return newest !== undefined ? newest.path : os.homedir()
 }
 
-/** Lay the two views out: GUI on top, terminal panel at the bottom. */
+/** Lay the views out: header chrome (main.mjs) on top, GUI below it, panel at the bottom. */
 export function layoutTerminalPanel() {
   if (mainWindow === null || mainWindow.isDestroyed() || guiView === null) return
   const [width, height] = mainWindow.getContentSize()
   if (terminalView === null) {
-    guiView.setBounds({ x: 0, y: 0, width, height })
+    guiView.setBounds({ x: 0, y: chromeHeight, width, height: height - chromeHeight })
     return
   }
   const panel = clamp(panelHeight, MIN_HEIGHT, Math.floor(height * 0.75))
-  guiView.setBounds({ x: 0, y: 0, width, height: height - panel })
+  guiView.setBounds({ x: 0, y: chromeHeight, width, height: height - chromeHeight - panel })
   terminalView.setBounds({ x: 0, y: height - panel, width, height: panel })
 }
 
@@ -275,6 +288,7 @@ export function openTerminalPanel(win, gui) {
     terminalView.setBorderRadius(10)
   }
   mainWindow.contentView.addChildView(terminalView)
+  if (shortcutHandler !== null) shortcutHandler(terminalView.webContents)
   terminalView.webContents.on('console-message', ({ level, message }) => {
     if (level === 'error') console.log(`[terminal renderer] ${message}`)
   })

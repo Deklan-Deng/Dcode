@@ -17,8 +17,8 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { startServer } from './server.mjs'
-import { layoutTerminalPanel, toggleTerminalPanel } from './terminal.mjs'
-import { checkForAppUpdate, ensureHarness } from './updater.mjs'
+import { layoutTerminalPanel, setChromeHeight, setShortcutHandler, toggleTerminalPanel } from './terminal.mjs'
+import { checkForAppUpdate, ensureHarness, localAppVersion } from './updater.mjs'
 
 const { autoUpdater } = updaterModule
 
@@ -26,6 +26,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const APP_NAME = 'Dcode'
 /** Brand assets: app icon + menu-bar tray glyphs (build/). */
 const ASSETS_DIR = path.join(__dirname, '..', 'build')
+/** Height of the custom in-window menu bar (header chrome). */
+const CHROME_H = 36
 
 app.setName(APP_NAME)
 
@@ -41,6 +43,7 @@ if (!gotLock) {
   let splash = null
   let mainWindow = null
   let guiView = null
+  let headerView = null
   let tray = null
   let updateTimer = null
   let lastUpdateVersion = null
@@ -213,6 +216,74 @@ if (!gotLock) {
     ]))
   }
 
+  /** Keep the custom header chrome sized to the window. */
+  const layoutChrome = () => {
+    if (mainWindow === null || mainWindow.isDestroyed() || headerView === null) return
+    const [width] = mainWindow.getContentSize()
+    headerView.setBounds({ x: 0, y: 0, width, height: CHROME_H })
+  }
+
+  /** Header menu actions (sent by header.html over header:action). */
+  const runHeaderAction = (name) => {
+    switch (name) {
+      case 'toggle-terminal':
+        toggleTerminalPanel(mainWindow, guiView)
+        break
+      case 'fullscreen':
+        if (mainWindow !== null && !mainWindow.isDestroyed()) {
+          mainWindow.setFullScreen(!mainWindow.isFullScreen())
+        }
+        break
+      case 'reload-gui':
+        if (guiView !== null) guiView.webContents.reload()
+        break
+      case 'about':
+        app.showAboutPanel()
+        break
+      case 'open-harness':
+        void shell.openExternal('https://github.com/deepseek-ai/deepseek-harness')
+        break
+      case 'open-dcode':
+        void shell.openExternal('https://github.com/Deklan-Deng/Dcode')
+        break
+      case 'devtools':
+        if (guiView !== null) guiView.webContents.openDevTools({ mode: 'detach' })
+        break
+      case 'quit':
+        app.quit()
+        break
+      default:
+        break
+    }
+  }
+
+  // With the native application menu removed, standard shortcuts must be
+  // re-registered per view (before-input-event covers GUI, header, terminal).
+  const installShortcuts = (webContents) => {
+    webContents.on('before-input-event', (event, input) => {
+      if (input.type !== 'keyDown') return
+      const isMac = process.platform === 'darwin'
+      const mod = isMac ? input.meta : input.control
+      const key = input.key.toLowerCase()
+      if (mod && key === 'q') {
+        event.preventDefault()
+        app.quit()
+      } else if (mod && key === 'w') {
+        event.preventDefault()
+        if (mainWindow !== null && !mainWindow.isDestroyed()) mainWindow.close()
+      } else if (mod && key === 'm') {
+        event.preventDefault()
+        if (mainWindow !== null && !mainWindow.isDestroyed()) mainWindow.minimize()
+      } else if (isMac && mod && key === 'h') {
+        event.preventDefault()
+        app.hide()
+      } else if (input.control && input.key === '`') {
+        event.preventDefault()
+        toggleTerminalPanel(mainWindow, guiView)
+      }
+    })
+  }
+
   const createMainWindow = (url) => {
     mainWindow = new BrowserWindow({
       width: 1320,
@@ -222,6 +293,7 @@ if (!gotLock) {
       show: false,
       title: APP_NAME,
       backgroundColor: '#0b0e14',
+      titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     })
     mainWindow.once('ready-to-show', () => mainWindow.show())
     // Safety net: the window's own webContents stays blank (the child views
@@ -232,12 +304,37 @@ if (!gotLock) {
         mainWindow.show()
       }
     }, 3000)
-    mainWindow.on('resize', () => layoutTerminalPanel())
+    mainWindow.on('resize', () => {
+      layoutChrome()
+      layoutTerminalPanel()
+    })
     mainWindow.on('closed', () => {
       clearTimeout(showTimer)
       mainWindow = null
       guiView = null
+      headerView = null
     })
+
+    // Custom menu bar (top chrome): replaces the native application menu.
+    headerView = new WebContentsView({
+      webPreferences: {
+        preload: path.join(__dirname, 'preload.cjs'),
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: true,
+      },
+    })
+    headerView.setBackgroundColor('#14161d')
+    mainWindow.contentView.addChildView(headerView)
+    headerView.webContents.on('console-message', ({ level, message }) => {
+      if (level === 'error') console.log(`[header renderer] ${message}`)
+    })
+    headerView.webContents.on('did-finish-load', () => {
+      headerView.webContents.send('header:init', { dev: !app.isPackaged, version: localAppVersion() })
+    })
+    installShortcuts(headerView.webContents)
+    void headerView.webContents.loadFile(path.join(__dirname, 'header.html'))
+    layoutChrome()
 
     // The GUI lives in a child view so the terminal panel can share the
     // window below it (Codex-style split instead of a separate window).
@@ -253,8 +350,9 @@ if (!gotLock) {
     mainWindow.contentView.addChildView(guiView)
     {
       const [width, height] = mainWindow.getContentSize()
-      guiView.setBounds({ x: 0, y: 0, width, height })
+      guiView.setBounds({ x: 0, y: CHROME_H, width, height: height - CHROME_H })
     }
+    installShortcuts(guiView.webContents)
 
     // Keep the GUI inside the app: same-origin navigations load in-window,
     // external http(s) links open in the default browser.
@@ -457,34 +555,19 @@ if (!gotLock) {
   ipcMain.on('dsh:update', () => void beginUpdate())
 
   app.whenReady().then(() => {
-    // Application menu: keep the stock roles (edit shortcuts are what make
-    // copy/paste work in the terminal) and add the terminal entry.
-    const isMac = process.platform === 'darwin'
-    const template = [
-      ...(isMac ? [{ role: 'appMenu' }] : []),
-      {
-        label: '终端',
-        submenu: [
-          { label: '切换终端', accelerator: 'Control+`', click: () => toggleTerminalPanel(mainWindow, guiView) },
-          { type: 'separator' },
-          ...(isMac ? [{ role: 'close' }] : [{ role: 'quit' }]),
-        ],
-      },
-      { role: 'editMenu' },
-      {
-        label: '视图',
-        submenu: [
-          { label: '切换终端', click: () => toggleTerminalPanel(mainWindow, guiView) },
-          { type: 'separator' },
-          { role: 'togglefullscreen' },
-        ],
-      },
-      { role: 'windowMenu' },
-    ]
-    if (!app.isPackaged) {
-      template.push({ label: '开发', submenu: [{ role: 'toggleDevTools' }] })
-    }
-    Menu.setApplicationMenu(Menu.buildFromTemplate(template))
+    // The app chrome is fully custom: the native application menu is removed
+    // (it would otherwise show "Electron" in dev) and replaced by the in-window
+    // header bar (header.html) plus per-view shortcut handling.
+    Menu.setApplicationMenu(null)
+    app.setAboutPanelOptions({
+      applicationName: APP_NAME,
+      applicationVersion: localAppVersion(),
+      copyright: 'MIT License — Dcode contributors',
+      website: 'https://github.com/Deklan-Deng/Dcode',
+    })
+    setChromeHeight(CHROME_H)
+    setShortcutHandler(installShortcuts)
+    ipcMain.on('header:action', (_event, name) => runHeaderAction(String(name)))
 
     // Dev runs use Electron's generic dock icon; brand it with the fish mark.
     // Hand the dock a properly sized image (128pt @1x / 256 @2x): a raw 1024px

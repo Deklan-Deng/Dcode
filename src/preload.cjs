@@ -32,6 +32,9 @@ contextBridge.exposeInMainWorld('dshDesktop', {
   },
   quit: () => ipcRenderer.send('dsh:quit'),
   beginUpdate: () => ipcRenderer.send('dsh:update'),
+  // Custom header bar bridge.
+  headerAction: (name) => ipcRenderer.send('header:action', name),
+  onHeaderInit: subscribe('header:init'),
   // Terminal panel bridge (xterm.js <-> node-pty sessions in the main process).
   termOnTabs: subscribe('term:tabs'),
   termOnTab: subscribe('term:tab'),
