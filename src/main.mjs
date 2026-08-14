@@ -17,7 +17,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { startServer } from './server.mjs'
-import { layoutTerminalPanel, setChromeHeight, setShortcutHandler, toggleTerminalPanel } from './terminal.mjs'
+import { layoutTerminalPanel, setChromeHeight, setShortcutHandler, setSidebarWidth, toggleTerminalPanel } from './terminal.mjs'
 import { checkForAppUpdate, ensureHarness, localAppVersion } from './updater.mjs'
 
 const { autoUpdater } = updaterModule
@@ -48,6 +48,8 @@ if (!gotLock) {
   let updateTimer = null
   let lastUpdateVersion = null
   let lastReleaseUrl = ''
+  let sidebarTimer = null
+  let measuredSidebar = 0
 
   const logDir = path.join(app.getPath('userData'), 'logs')
   const logFile = path.join(logDir, 'dsh.log')
@@ -223,6 +225,41 @@ if (!gotLock) {
     headerView.setBounds({ x: 0, y: 0, width, height: CHROME_H })
   }
 
+  /**
+   * Measure the GUI's left navigation sidebar so the terminal panel can sit
+   * to its right without covering it. Best-effort: falls back to a default.
+   */
+  const measureSidebar = async () => {
+    if (guiView === null || guiView.webContents.isDestroyed()) return
+    try {
+      const width = await guiView.webContents.executeJavaScript(
+        `(() => {
+          let best = 0
+          for (const el of document.querySelectorAll('aside, nav, [class*="sidebar" i], [class*="Sidebar"], [class*="rail" i]')) {
+            const r = el.getBoundingClientRect()
+            if (r.width < 80 || r.width > 560 || r.height < 300) continue
+            if (r.left < 8 && r.top < 80) best = Math.max(best, r.width)
+          }
+          return Math.round(best)
+        })()`,
+        true,
+      )
+      if (Number.isFinite(width) && width > 0 && Math.abs(width - measuredSidebar) > 8) {
+        measuredSidebar = width
+        log(`GUI sidebar width: ${width}px`)
+        setSidebarWidth(width)
+      }
+    } catch {
+      // Measurement is best-effort; the default sidebar width stands.
+    }
+  }
+
+  const scheduleSidebarChecks = () => {
+    if (sidebarTimer !== null) clearInterval(sidebarTimer)
+    // The sidebar can collapse/expand, so keep the measurement fresh.
+    sidebarTimer = setInterval(() => void measureSidebar(), 3000)
+  }
+
   /** Header chrome actions (sent by header.html over header:action). */
   const runHeaderAction = (name) => {
     if (name === 'toggle-terminal') toggleTerminalPanel(mainWindow, guiView)
@@ -278,9 +315,14 @@ if (!gotLock) {
     mainWindow.on('resize', () => {
       layoutChrome()
       layoutTerminalPanel()
+      // Debounce: re-measure the sidebar after resizing settles.
+      clearTimeout(measureSidebar.debounce)
+      measureSidebar.debounce = setTimeout(() => void measureSidebar(), 250)
     })
     mainWindow.on('closed', () => {
       clearTimeout(showTimer)
+      if (sidebarTimer !== null) clearInterval(sidebarTimer)
+      sidebarTimer = null
       mainWindow = null
       guiView = null
       headerView = null
@@ -355,6 +397,8 @@ if (!gotLock) {
       if (splash !== null && !splash.isDestroyed()) splash.close()
       // A reload wipes injected DOM; restore the badge when an update is pending.
       if (lastUpdateVersion !== null) showUpdateBadge(lastUpdateVersion)
+      void measureSidebar()
+      scheduleSidebarChecks()
     })
 
     void guiView.webContents.loadURL(url)

@@ -42,11 +42,18 @@ let dragTimer = null
 let ipcRegistered = false
 /** Height of the custom header chrome above the GUI (set by main.mjs). */
 let chromeHeight = 0
+/** Left edge of the terminal panel: the GUI's sidebar width (set by main.mjs). */
+let sidebarWidth = 232
 /** Shortcut installer shared by main.mjs (applied to this panel's webContents). */
 let shortcutHandler = null
 
 export function setChromeHeight(height) {
   chromeHeight = Math.max(0, Number(height) || 0)
+  layoutTerminalPanel()
+}
+
+export function setSidebarWidth(width) {
+  sidebarWidth = clamp(Number(width) || 232, 120, 600)
   layoutTerminalPanel()
 }
 
@@ -90,17 +97,19 @@ const defaultCwd = () => {
   return newest !== undefined ? newest.path : os.homedir()
 }
 
-/** Lay the views out: header chrome (main.mjs) on top, GUI below it, panel at the bottom. */
+/**
+ * Lay the views out: header chrome (main.mjs) on top, GUI full-size below it.
+ * The terminal panel floats over the GUI's RIGHT portion only, leaving the
+ * GUI's left navigation sidebar fully visible.
+ */
 export function layoutTerminalPanel() {
   if (mainWindow === null || mainWindow.isDestroyed() || guiView === null) return
   const [width, height] = mainWindow.getContentSize()
-  if (terminalView === null) {
-    guiView.setBounds({ x: 0, y: chromeHeight, width, height: height - chromeHeight })
-    return
-  }
+  guiView.setBounds({ x: 0, y: chromeHeight, width, height: height - chromeHeight })
+  if (terminalView === null) return
   const panel = clamp(panelHeight, MIN_HEIGHT, Math.floor(height * 0.75))
-  guiView.setBounds({ x: 0, y: chromeHeight, width, height: height - chromeHeight - panel })
-  terminalView.setBounds({ x: 0, y: height - panel, width, height: panel })
+  const left = Math.min(sidebarWidth, Math.max(0, width - 320))
+  terminalView.setBounds({ x: left, y: height - panel, width: width - left, height: panel })
 }
 
 // ---------------------------------------------------------------------------
