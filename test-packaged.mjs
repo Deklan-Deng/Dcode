@@ -19,17 +19,12 @@ const root = path.join(path.dirname(fileURLToPath(import.meta.url)))
 const snapshotPath = path.join(root, 'pack', 'harness.tgz')
 const snapshotMetaPath = path.join(root, 'pack', 'harness.meta.json')
 
-const stepLog = (id, label, state, detail = '') => {
-  console.log(`[step:${state}] ${label}${detail !== '' ? ` (${detail})` : ''}`)
-}
-
 const userDataLike = fs.mkdtempSync(path.join(os.tmpdir(), 'dcode-packaged-'))
 console.log('userData-like dir:', userDataLike)
 
 try {
   const ok = await ensureHarness({
     onProgress: (line) => console.log('  >', line),
-    onStep: stepLog,
     packaged: true,
     harnessDir: path.join(userDataLike, 'harness'),
     snapshotPath,
@@ -41,7 +36,6 @@ try {
   // Second call must be a no-op (version stamp matches).
   const second = await ensureHarness({
     onProgress: () => {},
-    onStep: () => {},
     packaged: true,
     harnessDir: path.join(userDataLike, 'harness'),
     snapshotPath,

@@ -77,18 +77,10 @@ if (!gotLock) {
     }
   }
 
-  /** Checklist step for the splash UI (pending/running/done/error). */
-  const step = (id, label, state, detail = '') => {
-    if (splash !== null && !splash.isDestroyed()) {
-      splash.webContents.send('dsh:step', { id, label, state, detail })
-    }
-    log(`[step:${state}] ${label}${detail !== '' ? ` (${detail})` : ''}`)
-  }
-
   const createSplash = () => {
     splash = new BrowserWindow({
       width: 440,
-      height: 400,
+      height: 300,
       resizable: false,
       frame: false,
       transparent: false,
@@ -401,7 +393,6 @@ if (!gotLock) {
     })
     guiView.webContents.on('did-finish-load', () => {
       log('Main window loaded.')
-      step('gui', '加载界面', 'done')
       if (mainWindow !== null && !mainWindow.isDestroyed() && !mainWindow.isVisible()) {
         mainWindow.show()
       }
@@ -413,7 +404,6 @@ if (!gotLock) {
     })
 
     void guiView.webContents.loadURL(url)
-    step('gui', '加载界面', 'running')
   }
 
   const bootServer = async () => {
@@ -444,7 +434,6 @@ if (!gotLock) {
       return
     }
     createMainWindow(handle.url)
-    step('server', '启动 DeepSeek Harness 服务', 'done', handle.url)
     // Test hook: open the terminal panel right after the GUI loads.
     if (process.env.DSH_DESKTOP_OPEN_TERMINAL === '1') toggleTerminalPanel(mainWindow, guiView)
   }
@@ -520,7 +509,6 @@ if (!gotLock) {
       })
       autoUpdater.on('download-progress', (progress) => {
         log(`Downloading… ${Math.round(progress.percent)}% (${(progress.bytesPerSecond / 1024).toFixed(0)} KB/s)`)
-        step('download', '下载更新包', 'running', `${Math.round(progress.percent)}%`)
       })
       autoUpdater.once('update-downloaded', () => {
         cleanup()
@@ -557,18 +545,14 @@ if (!gotLock) {
     if (mainWindow !== null && !mainWindow.isDestroyed()) mainWindow.close()
     if (splash === null || splash.isDestroyed()) createSplash()
     try {
-      step('download', '下载更新包', 'running', '0%')
       await downloadPackage()
-      step('download', '下载更新包', 'done')
       log('Installing the update…')
-      step('install', '安装更新并重启', 'running')
       await stopServer()
       autoUpdater.quitAndInstall(false, true)
       return
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       log(`Update failed: ${message}`)
-      step('download', '下载更新包', 'error', '失败')
       await dialog.showMessageBox(splash, {
         type: 'error',
         title: '更新失败',
@@ -627,10 +611,8 @@ if (!gotLock) {
       isPackagedRun = app.isPackaged
       harnessRuntimeDir = isPackagedRun ? path.join(app.getPath('userData'), 'harness') : null
       log('Checking the bundled deepseek-harness…')
-      step('harness', '检查内置 DeepSeek Harness', 'running')
       const ready = await ensureHarness({
         onProgress: log,
-        onStep: step,
         packaged: isPackagedRun,
         harnessDir: harnessRuntimeDir ?? undefined,
         snapshotPath: isPackagedRun ? path.join(process.resourcesPath, 'harness.tgz') : null,
@@ -638,12 +620,9 @@ if (!gotLock) {
         version: localAppVersion(),
       })
       if (!ready) {
-        step('harness', '检查内置 DeepSeek Harness', 'error', '失败')
         sendFailure('Bundled harness bootstrap failed. See the log above.')
         return
       }
-      step('harness', '检查内置 DeepSeek Harness', 'done')
-      step('server', '启动 DeepSeek Harness 服务', 'running')
       await bootServer()
       if (serverHandle !== null) scheduleUpdateChecks()
     })()

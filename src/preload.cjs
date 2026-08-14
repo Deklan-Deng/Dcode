@@ -30,7 +30,6 @@ contextBridge.exposeInMainWorld('dshDesktop', {
   onFailure: (callback) => {
     ipcRenderer.on('dsh:failure', (_event, text) => callback(text))
   },
-  onStep: subscribe('dsh:step'),
   quit: () => ipcRenderer.send('dsh:quit'),
   beginUpdate: () => ipcRenderer.send('dsh:update'),
   // Custom header bar bridge.

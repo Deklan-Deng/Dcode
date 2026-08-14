@@ -28,54 +28,6 @@
       box-shadow: 0 4px 18px rgba(77, 107, 254, .35);
     }
     h1 { font-size: 15px; font-weight: 600; letter-spacing: .2px; }
-
-    /* ---- step checklist ---- */
-    #steps {
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
-      width: 392px;
-      margin-top: 2px;
-    }
-    .step {
-      display: flex;
-      align-items: center;
-      gap: 11px;
-      font-size: 12px;
-      color: #7d8aa0;
-      opacity: 0;
-      transform: translateY(5px);
-      animation: step-in .28s ease forwards;
-    }
-    @keyframes step-in { to { opacity: 1; transform: none; } }
-    .step .state {
-      width: 15px; height: 15px;
-      flex: none;
-      display: flex; align-items: center; justify-content: center;
-      font-size: 11px; line-height: 1;
-    }
-    .step .state.pending { border: 2px solid #2a3446; border-radius: 50%; }
-    .step .state.running {
-      border: 2px solid #2a3446;
-      border-top-color: #4d6bfe;
-      border-radius: 50%;
-      animation: spin .8s linear infinite;
-    }
-    .step .state.done { color: #57c78b; }
-    .step .state.done::before { content: "✓"; }
-    .step .state.error { color: #ff6b6b; }
-    .step .state.error::before { content: "✕"; }
-    @keyframes spin { to { transform: rotate(360deg); } }
-    .step .label {
-      flex: 1;
-      min-width: 0;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-    .step.running .label { color: #c9d4e3; }
-    .step .detail { color: #5d6b85; font-size: 11px; flex: none; }
-
     .status {
       font-size: 11px; color: #5d6b85;
       max-width: 380px; text-align: center;
@@ -115,7 +67,6 @@
     </svg>
   </div>
   <h1>Dcode</h1>
-  <div id="steps"></div>
   <div class="status" id="status">Starting…</div>
   <pre id="error"></pre>
   <button id="quit">Quit</button>

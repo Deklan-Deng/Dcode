@@ -173,11 +173,10 @@ const writeHarnessState = (state) => {
  * never consulted at runtime — local source modifications can't conflict with
  * anything, and the bundled harness only moves with the app's own releases.
  *
- * onStep(id, label, state, detail) reports checklist steps for the splash UI.
+ * onProgress(line) receives status lines shown on the splash.
  */
 export async function ensureHarness({
   onProgress = () => {},
-  onStep = () => {},
   packaged = false,
   harnessDir = HARNESS_DIR,
   snapshotPath = null,
@@ -198,11 +197,9 @@ export async function ensureHarness({
 
     if (snapshotPath === null || !fs.existsSync(snapshotPath)) {
       onProgress('内置 harness 快照缺失（安装包损坏？）')
-      onStep('extract', '解压内置 DeepSeek Harness', 'error', '快照缺失')
       return false
     }
     onProgress('首次运行：解压内置 harness 快照')
-    onStep('extract', '解压内置 DeepSeek Harness', 'running')
     try {
       fs.rmSync(harnessDir, { recursive: true, force: true })
     } catch {
@@ -221,12 +218,11 @@ export async function ensureHarness({
     const ok = await extractTarGz(snapshotPath, harnessDir, {
       totalFiles,
       onProgress: ({ pct, mb }) => {
-        const detail = totalFiles > 0 ? `${pct}%` : `${mb} MB`
-        onStep('extract', '解压内置 DeepSeek Harness', 'running', detail)
+        onProgress(`解压内置 harness 快照… ${totalFiles > 0 ? `${pct}%` : `${mb} MB`}`)
       },
     })
     if (!ok) {
-      onStep('extract', '解压内置 DeepSeek Harness', 'error', '失败')
+      onProgress('解压内置 harness 快照失败')
       return false
     }
     try {
@@ -234,20 +230,17 @@ export async function ensureHarness({
     } catch {
       // Stamp persistence must never take the app down.
     }
-    onStep('extract', '解压内置 DeepSeek Harness', 'done')
+    onProgress('内置 harness 就绪')
     return true
   }
 
   if (!harnessExists('.git')) {
     onProgress('内置 harness 缺失，首次引导：克隆官方仓库')
-    onStep('clone', '克隆官方仓库 deepseek-ai/deepseek-harness', 'running')
     const clone = await cloneHarness(onProgress)
     if (clone.code !== 0) {
       onProgress(`克隆失败：${clone.output.slice(-2000)}`)
-      onStep('clone', '克隆官方仓库', 'error', '失败')
       return false
     }
-    onStep('clone', '克隆官方仓库', 'done')
   }
   const head = harnessHead()
   if (head === '') {
@@ -258,26 +251,20 @@ export async function ensureHarness({
   const commitChanged = state.builtCommit !== head
   if (commitChanged && !harnessExists(PNPM_INSTALL_MARKER)) {
     onProgress('依赖缺失，首次引导：安装依赖')
-    onStep('install', '安装依赖 (pnpm install)', 'running')
     const install = await installHarness(onProgress)
     if (install.code !== 0) {
       onProgress(`依赖安装失败：${install.output.slice(-2000)}`)
-      onStep('install', '安装依赖', 'error', '失败')
       return false
     }
-    onStep('install', '安装依赖', 'done')
   }
   if (commitChanged || !harnessExists(WEB_DIST_INDEX)) {
     onProgress(commitChanged ? '内置 harness 版本变化，重新构建' : '首次引导：构建前端与库')
-    onStep('build', '构建前端与库 (pnpm run build)', 'running')
     const build = await buildHarness(onProgress)
     if (build.code !== 0) {
       onProgress(`构建失败：${build.output.slice(-2000)}`)
-      onStep('build', '构建前端与库', 'error', '失败')
       return false
     }
     writeHarnessState({ builtCommit: head })
-    onStep('build', '构建前端与库', 'done')
   }
   return true
 }
