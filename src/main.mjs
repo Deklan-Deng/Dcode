@@ -9,7 +9,7 @@
  * @module dcode/main
  */
 
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, shell, Tray } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, shell, Tray, WebContentsView } from 'electron'
 // electron-updater is CommonJS; ESM named-export detection fails in the
 // packaged loader, so default-import and destructure instead.
 import updaterModule from 'electron-updater'
@@ -17,6 +17,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { startServer } from './server.mjs'
+import { layoutTerminalPanel, toggleTerminalPanel } from './terminal.mjs'
 import { checkForAppUpdate, ensureHarness } from './updater.mjs'
 
 const { autoUpdater } = updaterModule
@@ -39,6 +40,7 @@ if (!gotLock) {
   let updating = false
   let splash = null
   let mainWindow = null
+  let guiView = null
   let tray = null
   let updateTimer = null
   let lastUpdateVersion = null
@@ -175,9 +177,9 @@ if (!gotLock) {
 
   /** Show the passive update pill next to the GUI's settings icon. */
   const showUpdateBadge = (version) => {
-    if (mainWindow === null || mainWindow.isDestroyed()) return
+    if (mainWindow === null || mainWindow.isDestroyed() || guiView === null) return
     lastUpdateVersion = version
-    mainWindow.webContents
+    guiView.webContents
       .executeJavaScript(badgeScript(version), true)
       .then((result) => log(`Update badge: ${String(result)} (v${version})`))
       .catch((error) => log(`Update badge injection failed: ${String(error)}`))
@@ -195,6 +197,7 @@ if (!gotLock) {
     tray = new Tray(image)
     tray.setToolTip(`${APP_NAME} — DeepSeek Harness Desktop`)
     tray.setContextMenu(Menu.buildFromTemplate([
+      { label: '切换终端', click: () => toggleTerminalPanel(mainWindow, guiView) },
       {
         label: `打开 ${APP_NAME}`,
         click: () => {
@@ -219,6 +222,17 @@ if (!gotLock) {
       show: false,
       title: APP_NAME,
       backgroundColor: '#0b0e14',
+    })
+    mainWindow.once('ready-to-show', () => mainWindow.show())
+    mainWindow.on('resize', () => layoutTerminalPanel())
+    mainWindow.on('closed', () => {
+      mainWindow = null
+      guiView = null
+    })
+
+    // The GUI lives in a child view so the terminal panel can share the
+    // window below it (Codex-style split instead of a separate window).
+    guiView = new WebContentsView({
       webPreferences: {
         preload: path.join(__dirname, 'preload.cjs'),
         contextIsolation: true,
@@ -226,22 +240,24 @@ if (!gotLock) {
         sandbox: true,
       },
     })
-    mainWindow.once('ready-to-show', () => mainWindow.show())
-    mainWindow.on('closed', () => {
-      mainWindow = null
-    })
+    guiView.setBackgroundColor('#0b0e14')
+    mainWindow.contentView.addChildView(guiView)
+    {
+      const [width, height] = mainWindow.getContentSize()
+      guiView.setBounds({ x: 0, y: 0, width, height })
+    }
 
     // Keep the GUI inside the app: same-origin navigations load in-window,
     // external http(s) links open in the default browser.
     const serverOrigin = new URL(url).origin
-    mainWindow.webContents.setWindowOpenHandler(({ url: target }) => {
+    guiView.webContents.setWindowOpenHandler(({ url: target }) => {
       if (target.startsWith('http://') || target.startsWith('https://')) {
         if (target.startsWith(serverOrigin)) return { action: 'allow' }
         void shell.openExternal(target)
       }
       return { action: 'deny' }
     })
-    mainWindow.webContents.on('will-navigate', (event, target) => {
+    guiView.webContents.on('will-navigate', (event, target) => {
       if (!target.startsWith(serverOrigin)) {
         event.preventDefault()
         if (target.startsWith('http://') || target.startsWith('https://')) {
@@ -250,19 +266,20 @@ if (!gotLock) {
       }
     })
 
-    mainWindow.webContents.on('console-message', ({ level, message }) => {
+    guiView.webContents.on('console-message', ({ level, message }) => {
       if (level === 'error') log(`[renderer] ${message}`)
     })
-    mainWindow.webContents.on('did-fail-load', (_event, code, description, validatedUrl) => {
+    guiView.webContents.on('did-fail-load', (_event, code, description, validatedUrl) => {
       log(`Main window failed to load ${validatedUrl} (${code}): ${description}`)
     })
-    mainWindow.webContents.on('did-finish-load', () => {
+    guiView.webContents.on('did-finish-load', () => {
       log('Main window loaded.')
+      if (splash !== null && !splash.isDestroyed()) splash.close()
       // A reload wipes injected DOM; restore the badge when an update is pending.
       if (lastUpdateVersion !== null) showUpdateBadge(lastUpdateVersion)
     })
 
-    void mainWindow.loadURL(url)
+    void guiView.webContents.loadURL(url)
   }
 
   const bootServer = async () => {
@@ -286,7 +303,8 @@ if (!gotLock) {
       return
     }
     createMainWindow(handle.url)
-    if (splash !== null && !splash.isDestroyed()) splash.close()
+    // Test hook: open the terminal panel right after the GUI loads.
+    if (process.env.DSH_DESKTOP_OPEN_TERMINAL === '1') toggleTerminalPanel(mainWindow, guiView)
   }
 
   const stopServer = async () => {
@@ -427,6 +445,35 @@ if (!gotLock) {
   ipcMain.on('dsh:update', () => void beginUpdate())
 
   app.whenReady().then(() => {
+    // Application menu: keep the stock roles (edit shortcuts are what make
+    // copy/paste work in the terminal) and add the terminal entry.
+    const isMac = process.platform === 'darwin'
+    const template = [
+      ...(isMac ? [{ role: 'appMenu' }] : []),
+      {
+        label: '终端',
+        submenu: [
+          { label: '切换终端', accelerator: 'Control+`', click: () => toggleTerminalPanel(mainWindow, guiView) },
+          { type: 'separator' },
+          ...(isMac ? [{ role: 'close' }] : [{ role: 'quit' }]),
+        ],
+      },
+      { role: 'editMenu' },
+      {
+        label: '视图',
+        submenu: [
+          { label: '切换终端', click: () => toggleTerminalPanel(mainWindow, guiView) },
+          { type: 'separator' },
+          { role: 'togglefullscreen' },
+        ],
+      },
+      { role: 'windowMenu' },
+    ]
+    if (!app.isPackaged) {
+      template.push({ label: '开发', submenu: [{ role: 'toggleDevTools' }] })
+    }
+    Menu.setApplicationMenu(Menu.buildFromTemplate(template))
+
     // Dev runs use Electron's generic dock icon; brand it with the fish mark.
     // Hand the dock a properly sized image (128pt @1x / 256 @2x): a raw 1024px
     // PNG renders at its natural size and looks oversized next to other apps.

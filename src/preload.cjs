@@ -20,4 +20,17 @@ contextBridge.exposeInMainWorld('dshDesktop', {
   },
   quit: () => ipcRenderer.send('dsh:quit'),
   beginUpdate: () => ipcRenderer.send('dsh:update'),
+  // Terminal window bridge (xterm.js <-> node-pty in the main process).
+  termOnData: (callback) => {
+    ipcRenderer.on('term:data', (_event, data) => callback(data))
+  },
+  termOnExit: (callback) => {
+    ipcRenderer.on('term:exit', (_event, code) => callback(code))
+  },
+  termInput: (data) => ipcRenderer.send('term:input', data),
+  termResize: (cols, rows) => ipcRenderer.send('term:resize', cols, rows),
+  termReady: () => ipcRenderer.send('term:ready'),
+  termClose: () => ipcRenderer.send('term:close'),
+  termDragStart: () => ipcRenderer.send('term:drag-start'),
+  termDragEnd: () => ipcRenderer.send('term:drag-end'),
 })
