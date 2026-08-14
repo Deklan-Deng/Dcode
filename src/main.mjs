@@ -223,38 +223,9 @@ if (!gotLock) {
     headerView.setBounds({ x: 0, y: 0, width, height: CHROME_H })
   }
 
-  /** Header menu actions (sent by header.html over header:action). */
+  /** Header chrome actions (sent by header.html over header:action). */
   const runHeaderAction = (name) => {
-    switch (name) {
-      case 'toggle-terminal':
-        toggleTerminalPanel(mainWindow, guiView)
-        break
-      case 'fullscreen':
-        if (mainWindow !== null && !mainWindow.isDestroyed()) {
-          mainWindow.setFullScreen(!mainWindow.isFullScreen())
-        }
-        break
-      case 'reload-gui':
-        if (guiView !== null) guiView.webContents.reload()
-        break
-      case 'about':
-        app.showAboutPanel()
-        break
-      case 'open-harness':
-        void shell.openExternal('https://github.com/deepseek-ai/deepseek-harness')
-        break
-      case 'open-dcode':
-        void shell.openExternal('https://github.com/Deklan-Deng/Dcode')
-        break
-      case 'devtools':
-        if (guiView !== null) guiView.webContents.openDevTools({ mode: 'detach' })
-        break
-      case 'quit':
-        app.quit()
-        break
-      default:
-        break
-    }
+    if (name === 'toggle-terminal') toggleTerminalPanel(mainWindow, guiView)
   }
 
   // With the native application menu removed, standard shortcuts must be
@@ -328,9 +299,6 @@ if (!gotLock) {
     mainWindow.contentView.addChildView(headerView)
     headerView.webContents.on('console-message', ({ level, message }) => {
       if (level === 'error') console.log(`[header renderer] ${message}`)
-    })
-    headerView.webContents.on('did-finish-load', () => {
-      headerView.webContents.send('header:init', { dev: !app.isPackaged, version: localAppVersion() })
     })
     installShortcuts(headerView.webContents)
     void headerView.webContents.loadFile(path.join(__dirname, 'header.html'))
