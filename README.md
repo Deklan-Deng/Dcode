@@ -15,7 +15,8 @@
   端口系统自动分配），通过就绪信号 `dsh web: http://127.0.0.1:<port>` 探测完成并加载进窗口。
 - **构建指纹**：应用记录当前构建对应的 harness commit（`.harness-state.json`）。
   每次启动对比，commit 变了（你发版时更新了内置 harness，或在 harness/ 里手动
-  pull 了官方代码）就自动重装依赖并重新构建。
+  pull 了官方代码）就自动重新构建；若依赖安装标记（`node_modules/.modules.yaml`）
+  缺失，会先重装依赖再构建。
 - 关闭窗口即退出并优雅停止 dsh 子进程（SIGINT → SIGTERM → SIGKILL）。
 - 启动日志：`~/Library/Application Support/DeepSeek Harness Desktop/logs/dsh.log`。
 
@@ -45,6 +46,9 @@ npm start     # 每次启动：一条命令，其余全部自动
 Node 要求：系统 `node >= 22.19`。系统 node 缺失或过旧时自动改用 Electron 内置 Node。
 pnpm 由 corepack 按 harness 锁定的版本自动获取，缓存全收在工作区，不污染全局。
 
+测试钩子：`DSH_DESKTOP_FORCE_UPDATE=1 npm start` 会跳过远端检查，直接注入
+「更新 v9.9.9-test」按钮，用于验证按钮位置与样式。
+
 API Key 等配置与命令行版完全一致：读取环境变量 / `.env` / `~/.dsh`，会话数据共享。
 
 ## 上 GitHub 后的打包与发版
@@ -56,6 +60,8 @@ API Key 等配置与命令行版完全一致：读取环境变量 / `.env` / `~/
    npm run dist:mac    # 产出 dist/*.dmg + *.zip + latest*.yml
    npm run dist:win    # 产出 dist/*Setup.exe + latest.yml（建议 CI 构建）
    ```
+   首次打包前先完成「首次打包前的待办」里的两项（内置 harness 打包 + 引导路径迁移），
+   否则安装包会缺 harness，或运行时因只读目录引导失败。
 3. 发布到 GitHub Release（electron-builder 会自动上传包和更新元数据）：
    ```sh
    GH_TOKEN=xxx npm run release    # 等价于 electron-builder --publish always
@@ -70,21 +76,29 @@ API Key 等配置与命令行版完全一致：读取环境变量 / `.env` / `~/
 
 ```
 harness/            内置的 deepseek-harness 官方源码（应用自管：克隆/构建/指纹重建）
-src/main.mjs        Electron 主进程：窗口生命周期、启动/停止、更新检查与按钮注入
+src/main.mjs        Electron 主进程：窗口生命周期、dsh 启动/停止、更新检查、
+                    按钮注入、更新包下载与安装（electron-updater）
 src/server.mjs      dsh 子进程管理：Node 运行时选择、就绪探测、优雅退出
-src/updater.mjs     harness 引导（克隆/安装/构建指纹）＋ 应用自更新（版本号对比、pull、install）
+src/updater.mjs     harness 引导（克隆/安装/构建指纹）＋ 应用自更新检查
+                    （GitHub Releases 抓取、版本对比）
 src/preload.cjs     contextBridge：启动画面状态/退出、更新按钮点击桥接
 src/splash.html     启动画面（状态 + 失败日志 + 退出按钮）
 update-config.json  自更新源配置：{"repo": "your-name/dsh-desktop"}
+.harness-state.json 构建指纹（记录当前构建对应的 harness commit，自动生成）
 test-server.mjs     dsh 启动冒烟测试（node test-server.mjs）
-test-updater.mjs    版本比较/更新检查/更新应用演练（node test-updater.mjs）
+test-updater.mjs    版本比较 + Releases 检查演练（node test-updater.mjs；
+                    包安装流程只在打包版内由 electron-updater 执行）
 ```
 
-## 打包成 macOS 应用（后续阶段）
+## 首次打包前的待办（代码尚未覆盖）
 
-```sh
-npm run dist:mac
-```
+`npm start` 开发模式目前完整可用；打包成 dmg/exe 之前，还差这几件事（第 3 项可选）：
 
-打包前需把 `harness/`（源码 + 构建产物）纳入 `electron-builder.yml` 的 `files`，
-并处理运行时 git/pnpm 路径；产物输出 `dist/`。
+1. **harness 纳入安装包**：`electron-builder.yml` 的 `files` 目前只有壳层
+   （`src/**`、`package.json`、`update-config.json`），`harness/` 的打包项还处于
+   注释状态。首次打包前需把 `harness/`（源码 + 构建产物，排除 `node_modules`）加入。
+2. **引导路径迁移**：打包后的应用目录只读（asar），而当前 `ensureHarness` 的
+   克隆/安装/构建都在应用目录内进行。发布前需把 harness 工作目录迁到
+   `app.getPath('userData')` 下，指纹文件 `.harness-state.json` 一并迁移。
+3. **图标（可选）**：放一张 `build/icon.icns`（mac）/ `build/icon.ico`（win）
+   给应用换品牌图标。
