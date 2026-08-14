@@ -9,7 +9,7 @@
  * @module dcode/main
  */
 
-import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, shell, Tray } from 'electron'
 // electron-updater is CommonJS; ESM named-export detection fails in the
 // packaged loader, so default-import and destructure instead.
 import updaterModule from 'electron-updater'
@@ -23,6 +23,8 @@ const { autoUpdater } = updaterModule
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const APP_NAME = 'Dcode'
+/** Brand assets: app icon + menu-bar tray glyphs (build/). */
+const ASSETS_DIR = path.join(__dirname, '..', 'build')
 
 app.setName(APP_NAME)
 
@@ -37,6 +39,7 @@ if (!gotLock) {
   let updating = false
   let splash = null
   let mainWindow = null
+  let tray = null
   let updateTimer = null
   let lastUpdateVersion = null
   let lastReleaseUrl = ''
@@ -178,6 +181,33 @@ if (!gotLock) {
       .executeJavaScript(badgeScript(version), true)
       .then((result) => log(`Update badge: ${String(result)} (v${version})`))
       .catch((error) => log(`Update badge injection failed: ${String(error)}`))
+  }
+
+  const createTray = () => {
+    if (tray !== null || process.platform !== 'darwin') return
+    const p1 = path.join(ASSETS_DIR, 'trayTemplate.png')
+    const p2 = path.join(ASSETS_DIR, 'trayTemplate@2x.png')
+    if (!fs.existsSync(p1)) return
+    const image = nativeImage.createEmpty()
+    image.addRepresentation({ scaleFactor: 1.0, buffer: fs.readFileSync(p1) })
+    if (fs.existsSync(p2)) image.addRepresentation({ scaleFactor: 2.0, buffer: fs.readFileSync(p2) })
+    image.setTemplateImage(true)
+    tray = new Tray(image)
+    tray.setToolTip(`${APP_NAME} — DeepSeek Harness Desktop`)
+    tray.setContextMenu(Menu.buildFromTemplate([
+      {
+        label: `打开 ${APP_NAME}`,
+        click: () => {
+          if (mainWindow !== null && !mainWindow.isDestroyed()) {
+            if (mainWindow.isMinimized()) mainWindow.restore()
+            mainWindow.show()
+            mainWindow.focus()
+          }
+        },
+      },
+      { type: 'separator' },
+      { label: `退出 ${APP_NAME}`, click: () => app.quit() },
+    ]))
   }
 
   const createMainWindow = (url) => {
@@ -397,6 +427,20 @@ if (!gotLock) {
   ipcMain.on('dsh:update', () => void beginUpdate())
 
   app.whenReady().then(() => {
+    // Dev runs use Electron's generic dock icon; brand it with the fish mark.
+    // Hand the dock a properly sized image (128pt @1x / 256 @2x): a raw 1024px
+    // PNG renders at its natural size and looks oversized next to other apps.
+    if (process.platform === 'darwin' && !app.isPackaged) {
+      const p128 = path.join(ASSETS_DIR, 'icon128.png')
+      const p256 = path.join(ASSETS_DIR, 'icon256.png')
+      if (fs.existsSync(p128)) {
+        const dockImage = nativeImage.createEmpty()
+        dockImage.addRepresentation({ scaleFactor: 1.0, buffer: fs.readFileSync(p128) })
+        if (fs.existsSync(p256)) dockImage.addRepresentation({ scaleFactor: 2.0, buffer: fs.readFileSync(p256) })
+        app.dock.setIcon(dockImage)
+      }
+    }
+    createTray()
     createSplash()
     void (async () => {
       log('Checking the bundled deepseek-harness…')
