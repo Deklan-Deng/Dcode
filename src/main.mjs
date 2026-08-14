@@ -16,9 +16,10 @@ import updaterModule from 'electron-updater'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { HARNESS_BUILT_ARGS, startServer } from './server.mjs'
+import { resolveNodeRuntime, startServer, HARNESS_BUILT_ARGS } from './server.mjs'
 import { layoutTerminalPanel, setChromeHeight, setShortcutHandler, setSidebarWidth, toggleTerminalPanel } from './terminal.mjs'
 import { checkForAppUpdate, ensureHarness, localAppVersion } from './updater.mjs'
+import { registerUsageIpc } from './usage.mjs'
 
 const { autoUpdater } = updaterModule
 
@@ -403,6 +404,37 @@ if (!gotLock) {
       if (splash !== null && !splash.isDestroyed()) splash.close()
       // A reload wipes injected DOM; restore the badge when an update is pending.
       if (lastUpdateVersion !== null) showUpdateBadge(lastUpdateVersion)
+      // Test hook: open the settings dialog, verify the native 用量 section
+      // (registered by the harness fork's ui-settings-usage plugin) renders.
+      if (process.env.DSH_DESKTOP_USAGE_TEST === '1') {
+        const probe = async (script) => {
+          try {
+            return await guiView.webContents.executeJavaScript(script, true)
+          } catch (error) {
+            return `probe error: ${String(error)}`
+          }
+        }
+        setTimeout(() => {
+          void probe(
+            `(() => { const b = document.querySelector('button[aria-haspopup="dialog"]'); if (!b) return 'no-trigger'; b.click(); return 'clicked-trigger' })()`,
+          ).then((r) => log(`Usage test: trigger → ${r}`))
+        }, 4000)
+        setTimeout(() => {
+          void probe(
+            `(() => { const roles = [...document.querySelectorAll('[role]')].map((e) => e.getAttribute('role')); const dialogs = [...document.querySelectorAll('[role="dialog"]')].map((d) => d.textContent.slice(0, 60)); const navs = [...document.querySelectorAll('nav button')].map((b) => b.textContent.trim()); return JSON.stringify({ roles: roles.slice(0, 20), dialogs, navs }) })()`,
+          ).then((r) => log(`Usage test: debug → ${r}`))
+        }, 8000)
+        setTimeout(() => {
+          void probe(
+            `(() => { const btn = [...document.querySelectorAll('nav button')].find((b) => b.textContent?.trim() === '用量'); if (!btn) return 'no-nav'; btn.click(); return 'clicked' })()`,
+          )
+        }, 10000)
+        setTimeout(() => {
+          void probe(
+            `(() => { const d = document.querySelector('[role="dialog"]'); if (!d) return 'no-dialog'; return d.textContent.includes('Token 用量') ? 'section-with-data' : 'section-missing' })()`,
+          ).then((r) => log(`Usage test: section → ${r}`))
+        }, 14000)
+      }
       void measureSidebar()
       scheduleSidebarChecks()
     })
@@ -593,6 +625,7 @@ if (!gotLock) {
     setChromeHeight(CHROME_H)
     setShortcutHandler(installShortcuts)
     ipcMain.on('header:action', (_event, name) => runHeaderAction(String(name)))
+    registerUsageIpc(ipcMain, () => resolveNodeRuntime(log))
 
     // Dev runs use Electron's generic dock icon; brand it with the fish mark.
     // Hand the dock a properly sized image (128pt @1x / 256 @2x): a raw 1024px
