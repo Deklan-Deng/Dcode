@@ -264,7 +264,11 @@ if (!gotLock) {
 
   /** Header chrome actions (sent by header.html over header:action). */
   const runHeaderAction = (name) => {
-    if (name === 'toggle-terminal') toggleTerminalPanel(mainWindow, guiView)
+    if (name === 'toggle-terminal') {
+      toggleTerminalPanel(mainWindow, guiView)
+    } else if (name === 'open-github') {
+      void shell.openExternal('https://github.com/Deklan-Deng/Dcode')
+    }
   }
 
   // With the native application menu removed, standard shortcuts must be
