@@ -47,11 +47,14 @@ const pickShell = () => {
 export function layoutTerminalPanel() {
   if (mainWindow === null || mainWindow.isDestroyed() || guiView === null) return
   const [width, height] = mainWindow.getContentSize()
+  if (terminalView === null) {
+    // No panel: the GUI takes the whole window.
+    guiView.setBounds({ x: 0, y: 0, width, height })
+    return
+  }
   const panel = clamp(panelHeight, MIN_HEIGHT, Math.floor(height * 0.75))
   guiView.setBounds({ x: 0, y: 0, width, height: height - panel })
-  if (terminalView !== null) {
-    terminalView.setBounds({ x: 0, y: height - panel, width, height: panel })
-  }
+  terminalView.setBounds({ x: 0, y: height - panel, width, height: panel })
 }
 
 const killPty = () => {

@@ -224,8 +224,17 @@ if (!gotLock) {
       backgroundColor: '#0b0e14',
     })
     mainWindow.once('ready-to-show', () => mainWindow.show())
+    // Safety net: the window's own webContents stays blank (the child views
+    // carry the UI), so ready-to-show may never fire — never leave the window
+    // hidden. The GUI's did-finish-load below also shows it.
+    const showTimer = setTimeout(() => {
+      if (mainWindow !== null && !mainWindow.isDestroyed() && !mainWindow.isVisible()) {
+        mainWindow.show()
+      }
+    }, 3000)
     mainWindow.on('resize', () => layoutTerminalPanel())
     mainWindow.on('closed', () => {
+      clearTimeout(showTimer)
       mainWindow = null
       guiView = null
     })
@@ -274,6 +283,9 @@ if (!gotLock) {
     })
     guiView.webContents.on('did-finish-load', () => {
       log('Main window loaded.')
+      if (mainWindow !== null && !mainWindow.isDestroyed() && !mainWindow.isVisible()) {
+        mainWindow.show()
+      }
       if (splash !== null && !splash.isDestroyed()) splash.close()
       // A reload wipes injected DOM; restore the badge when an update is pending.
       if (lastUpdateVersion !== null) showUpdateBadge(lastUpdateVersion)
