@@ -1,6 +1,7 @@
 node_modules/
 dist/
 docs/
+pack/
 .npm-cache/
 .electron-cache/
 .electron-dl/

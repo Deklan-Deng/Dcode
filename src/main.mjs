@@ -16,7 +16,7 @@ import updaterModule from 'electron-updater'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { startServer } from './server.mjs'
+import { HARNESS_BUILT_ARGS, startServer } from './server.mjs'
 import { layoutTerminalPanel, setChromeHeight, setShortcutHandler, setSidebarWidth, toggleTerminalPanel } from './terminal.mjs'
 import { checkForAppUpdate, ensureHarness, localAppVersion } from './updater.mjs'
 
@@ -50,6 +50,8 @@ if (!gotLock) {
   let lastReleaseUrl = ''
   let sidebarTimer = null
   let measuredSidebar = 0
+  let isPackagedRun = false
+  let harnessRuntimeDir = null
 
   const logDir = path.join(app.getPath('userData'), 'logs')
   const logFile = path.join(logDir, 'dsh.log')
@@ -416,7 +418,14 @@ if (!gotLock) {
 
   const bootServer = async () => {
     log('Starting DeepSeek Harness (dsh web)…')
-    pendingServer = startServer({ log, logFile })
+    pendingServer = startServer({
+      log,
+      logFile,
+      // Packaged runs use the extracted snapshot + the pre-built CLI; dev
+      // runs keep the source launcher over the project checkout.
+      cwd: isPackagedRun ? harnessRuntimeDir : undefined,
+      args: isPackagedRun ? HARNESS_BUILT_ARGS : undefined,
+    })
     let handle
     try {
       handle = await pendingServer
@@ -613,9 +622,21 @@ if (!gotLock) {
     createTray()
     createSplash()
     void (async () => {
+      // Packaged runs resolve the harness snapshot out of the app bundle and
+      // extract it into userData; dev runs use the project's harness/ checkout.
+      isPackagedRun = app.isPackaged
+      harnessRuntimeDir = isPackagedRun ? path.join(app.getPath('userData'), 'harness') : null
       log('Checking the bundled deepseek-harness…')
       step('harness', '检查内置 DeepSeek Harness', 'running')
-      const ready = await ensureHarness({ onProgress: log, onStep: step })
+      const ready = await ensureHarness({
+        onProgress: log,
+        onStep: step,
+        packaged: isPackagedRun,
+        harnessDir: harnessRuntimeDir ?? undefined,
+        snapshotPath: isPackagedRun ? path.join(process.resourcesPath, 'harness.tgz') : null,
+        snapshotMetaPath: isPackagedRun ? path.join(process.resourcesPath, 'harness.meta.json') : null,
+        version: localAppVersion(),
+      })
       if (!ready) {
         step('harness', '检查内置 DeepSeek Harness', 'error', '失败')
         sendFailure('Bundled harness bootstrap failed. See the log above.')

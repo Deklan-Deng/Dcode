@@ -19,6 +19,7 @@ import { spawn, spawnSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { extractTarGz } from './extract.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -37,6 +38,8 @@ const PNPM_INSTALL_MARKER = 'node_modules/.modules.yaml'
 const WEB_DIST_INDEX = 'apps/web/dist/index.html'
 /** Which checkout commit the current build belongs to. */
 const HARNESS_STATE_FILE = '.harness-state.json'
+/** Stamps the extracted snapshot with the app version it belongs to. */
+const VERSION_STAMP_FILE = '.dcode-version'
 
 /**
  * Run one command to completion, streaming combined output lines.
@@ -163,9 +166,78 @@ const writeHarnessState = (state) => {
  * checkout commit (e.g. the app's release bumped the bundled harness, or a
  * manual pull inside harness/) triggers a fresh install + build; an unchanged
  * commit skips both. Returns true when the harness is runnable.
+ *
+ * Packaged mode (packaged=true) never touches git/pnpm/network: the harness is
+ * a fixed snapshot shipped inside the app (pack/harness.tgz) and is extracted
+ * once per app version into harnessDir. The official repository is therefore
+ * never consulted at runtime — local source modifications can't conflict with
+ * anything, and the bundled harness only moves with the app's own releases.
+ *
  * onStep(id, label, state, detail) reports checklist steps for the splash UI.
  */
-export async function ensureHarness({ onProgress = () => {}, onStep = () => {} } = {}) {
+export async function ensureHarness({
+  onProgress = () => {},
+  onStep = () => {},
+  packaged = false,
+  harnessDir = HARNESS_DIR,
+  snapshotPath = null,
+  snapshotMetaPath = null,
+  version = '0.0.0',
+} = {}) {
+  if (packaged) {
+    const stampFile = path.join(harnessDir, VERSION_STAMP_FILE)
+    let stamped = ''
+    try {
+      stamped = fs.readFileSync(stampFile, 'utf8').trim()
+    } catch {
+      // First run: nothing stamped yet.
+    }
+    const runnable =
+      stamped === version && fs.existsSync(path.join(harnessDir, 'apps', 'cli', 'lib', 'bin.js'))
+    if (runnable) return true
+
+    if (snapshotPath === null || !fs.existsSync(snapshotPath)) {
+      onProgress('内置 harness 快照缺失（安装包损坏？）')
+      onStep('extract', '解压内置 DeepSeek Harness', 'error', '快照缺失')
+      return false
+    }
+    onProgress('首次运行：解压内置 harness 快照')
+    onStep('extract', '解压内置 DeepSeek Harness', 'running')
+    try {
+      fs.rmSync(harnessDir, { recursive: true, force: true })
+    } catch {
+      // Best-effort cleanup of the previous snapshot.
+    }
+    fs.mkdirSync(harnessDir, { recursive: true })
+
+    let totalFiles = 0
+    if (snapshotMetaPath !== null && fs.existsSync(snapshotMetaPath)) {
+      try {
+        totalFiles = Number(JSON.parse(fs.readFileSync(snapshotMetaPath, 'utf8')).files ?? 0)
+      } catch {
+        totalFiles = 0
+      }
+    }
+    const ok = await extractTarGz(snapshotPath, harnessDir, {
+      totalFiles,
+      onProgress: ({ pct, mb }) => {
+        const detail = totalFiles > 0 ? `${pct}%` : `${mb} MB`
+        onStep('extract', '解压内置 DeepSeek Harness', 'running', detail)
+      },
+    })
+    if (!ok) {
+      onStep('extract', '解压内置 DeepSeek Harness', 'error', '失败')
+      return false
+    }
+    try {
+      fs.writeFileSync(stampFile, version)
+    } catch {
+      // Stamp persistence must never take the app down.
+    }
+    onStep('extract', '解压内置 DeepSeek Harness', 'done')
+    return true
+  }
+
   if (!harnessExists('.git')) {
     onProgress('内置 harness 缺失，首次引导：克隆官方仓库')
     onStep('clone', '克隆官方仓库 deepseek-ai/deepseek-harness', 'running')

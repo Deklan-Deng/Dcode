@@ -21,6 +21,16 @@ files:
 
 asar: true
 
+# The bundled harness snapshot (built tree + node_modules, packed by
+# scripts/pack-harness.mjs) ships OUTSIDE the asar as extraResources, so the
+# packaged app can extract it into userData on first run — no git, no pnpm,
+# no network, and the official repo is never consulted at runtime.
+extraResources:
+  - from: pack/harness.tgz
+    to: harness.tgz
+  - from: pack/harness.meta.json
+    to: harness.meta.json
+
 # Package-based self-update (electron-updater). The github provider reads the
 # `repository` field in package.json at publish time; set it to your GitHub
 # repo before running `electron-builder --publish always`.

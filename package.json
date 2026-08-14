@@ -9,10 +9,11 @@
   "repository": "https://github.com/Deklan-Deng/Dcode.git",
   "scripts": {
     "start": "electron .",
-    "dist": "electron-builder",
-    "dist:mac": "electron-builder --mac",
-    "dist:win": "electron-builder --win",
-    "release": "electron-builder --publish always"
+    "pack:harness": "node scripts/pack-harness.mjs",
+    "dist": "node scripts/pack-harness.mjs && electron-builder",
+    "dist:mac": "node scripts/pack-harness.mjs && electron-builder --mac",
+    "dist:win": "node scripts/pack-harness.mjs && electron-builder --win",
+    "release": "node scripts/pack-harness.mjs && electron-builder --publish always"
   },
   "devDependencies": {
     "electron": "^37.2.0",

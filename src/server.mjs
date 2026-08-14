@@ -20,7 +20,13 @@ const READY_LINE = /^dsh web: (http:\/\/\S+)/m
  * The source launcher: the exact command the official docs use
  * (`pnpm dsh web` runs `node --import tsx/esm apps/cli/src/bin.ts`).
  */
-const HARNESS_ARGS = ['--import', 'tsx/esm', 'apps/cli/src/bin.ts', 'web', '--port', '0']
+export const HARNESS_SOURCE_ARGS = ['--import', 'tsx/esm', 'apps/cli/src/bin.ts', 'web', '--port', '0']
+
+/**
+ * The packaged launcher: run the already-built CLI (no tsx, no compile step,
+ * no cache writes — the snapshot directory stays read-only-friendly).
+ */
+export const HARNESS_BUILT_ARGS = ['apps/cli/lib/bin.js', 'web', '--port', '0']
 
 /** dsh engines floor: node ^22.19.0 || >=24. */
 const MIN_NODE_MAJOR = 22
@@ -116,15 +122,15 @@ export async function stopChild(child, log) {
  * @param opts.logFile - path to append the child's full stdout/stderr to.
  * @returns a handle with url, port, and a stop() that shuts the server down.
  */
-export async function startServer({ log, logFile }) {
+export async function startServer({ log, logFile, cwd = HARNESS_DIR, args = HARNESS_SOURCE_ARGS }) {
   const runtime = await resolveNodeRuntime(log)
   const childEnv = { ...process.env }
   if (runtime.electronAsNode) childEnv.ELECTRON_RUN_AS_NODE = '1'
   const logStream = logFile ? fs.createWriteStream(logFile, { flags: 'a' }) : null
 
   return new Promise((resolve, reject) => {
-    const child = spawn(runtime.cmd, HARNESS_ARGS, {
-      cwd: HARNESS_DIR,
+    const child = spawn(runtime.cmd, args, {
+      cwd,
       env: childEnv,
       stdio: ['ignore', 'pipe', 'pipe'],
     })
