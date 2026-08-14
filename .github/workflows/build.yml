@@ -1,0 +1,180 @@
+name: Build packages (mac + win)
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+# Prerequisite: the bundled harness must live in this repo (as a git
+# submodule pointing at your fork of deepseek-ai/deepseek-harness, or as a
+# vendored directory). Each job installs + builds it on the target platform,
+# then scripts/pack-harness.mjs snapshots it (platform-specific binaries and
+# all) into the installer via extraResources.
+jobs:
+  mac:
+    name: macOS (arm64)
+    runs-on: macos-14
+    timeout-minutes: 90
+    steps:
+      - name: Checkout (with bundled harness)
+        uses: actions/checkout@v4
+        with:
+          submodules: 'recursive'
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.7.0
+          run_install: false
+
+      - name: Cache pnpm store (harness deps)
+        uses: actions/cache@v4
+        with:
+          path: ~/Library/pnpm/store
+          key: ${{ runner.os }}-pnpm-${{ hashFiles('harness/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-
+
+      - name: Install + build bundled harness
+        working-directory: harness
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm run build
+
+      - name: Install app dependencies
+        run: npm ci
+
+      - name: Pack harness snapshot + build macOS package
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PUBLISH_FLAG: ${{ startsWith(github.ref, 'refs/tags/v') && 'always' || 'never' }}
+        run: |
+          node scripts/pack-harness.mjs
+          npx electron-builder --mac --arm64 --publish "$PUBLISH_FLAG"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: mac-arm64
+          path: |
+            dist/*.dmg
+            dist/*.zip
+            dist/latest*.yml
+            dist/latest*.blockmap
+
+  win:
+    name: Windows (x64)
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout (with bundled harness)
+        uses: actions/checkout@v4
+        with:
+          submodules: 'recursive'
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.7.0
+          run_install: false
+
+      - name: Cache pnpm store (harness deps)
+        uses: actions/cache@v4
+        with:
+          path: '~\AppData\Local\pnpm\store'
+          key: ${{ runner.os }}-pnpm-${{ hashFiles('harness/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-
+
+      - name: Install + build bundled harness
+        working-directory: harness
+        shell: bash
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm run build
+
+      - name: Install app dependencies
+        run: npm ci
+
+      - name: Pack harness snapshot + build Windows package
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PUBLISH_FLAG: ${{ startsWith(github.ref, 'refs/tags/v') && 'always' || 'never' }}
+        run: |
+          node scripts/pack-harness.mjs
+          npx electron-builder --win --publish "$PUBLISH_FLAG"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: win-x64
+          path: |
+            dist/*.exe
+            dist/latest*.yml
+
+  # Intel Macs: uncomment when needed. NOTE: keep publish off (publish:
+  # 'never') — only one macOS job should upload latest-mac.yml, otherwise the
+  # per-arch jobs overwrite each other's update metadata.
+  # mac-x64:
+  #   name: macOS (x64)
+  #   runs-on: macos-13
+  #   timeout-minutes: 90
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #       with:
+  #         submodules: 'recursive'
+  #     - uses: actions/setup-node@v4
+  #       with:
+  #         node-version: 22
+  #         cache: 'npm'
+  #     - uses: pnpm/action-setup@v4
+  #       with:
+  #         version: 11.7.0
+  #         run_install: false
+  #     - uses: actions/cache@v4
+  #       with:
+  #         path: ~/Library/pnpm/store
+  #         key: ${{ runner.os }}-pnpm-${{ hashFiles('harness/pnpm-lock.yaml') }}
+  #         restore-keys: |
+  #           ${{ runner.os }}-pnpm-
+  #     - name: Install + build bundled harness
+  #       working-directory: harness
+  #       run: |
+  #         pnpm install --frozen-lockfile
+  #         pnpm run build
+  #     - name: Install app dependencies
+  #       run: npm ci
+  #     - name: Pack harness snapshot + build macOS package (x64)
+  #       env:
+  #         CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+  #       run: |
+  #         node scripts/pack-harness.mjs
+  #         npx electron-builder --mac --x64 --publish never
+  #     - name: Upload artifacts
+  #       uses: actions/upload-artifact@v4
+  #       with:
+  #         name: mac-x64
+  #         path: |
+  #           dist/*.dmg
+  #           dist/*.zip
