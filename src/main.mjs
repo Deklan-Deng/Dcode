@@ -10,11 +10,16 @@
  */
 
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
+// electron-updater is CommonJS; ESM named-export detection fails in the
+// packaged loader, so default-import and destructure instead.
+import updaterModule from 'electron-updater'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { startServer } from './server.mjs'
-import { applyAppUpdate, checkForAppUpdate, ensureHarness } from './updater.mjs'
+import { checkForAppUpdate, ensureHarness } from './updater.mjs'
+
+const { autoUpdater } = updaterModule
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const APP_NAME = 'DeepSeek Harness Desktop'
@@ -34,6 +39,7 @@ if (!gotLock) {
   let mainWindow = null
   let updateTimer = null
   let lastUpdateVersion = null
+  let lastReleaseUrl = ''
 
   const logDir = path.join(app.getPath('userData'), 'logs')
   const logFile = path.join(logDir, 'dsh.log')
@@ -288,6 +294,7 @@ if (!gotLock) {
     }
     if (result.hasUpdate) {
       log(`New version available: ${result.latest} (current ${result.current})`)
+      lastReleaseUrl = result.url
       showUpdateBadge(result.latest)
     } else {
       log(`App is up to date (${result.current}).`)
@@ -301,19 +308,69 @@ if (!gotLock) {
   }
 
   /**
-   * User-initiated update: stop the server, pull this app's own repository,
-   * reinstall dependencies, and relaunch. The splash reports progress.
+   * Download the platform package for the pending version via electron-updater.
+   * Resolves when the installer is ready on disk; rejects on failure.
+   */
+  const downloadPackage = () => {
+    return new Promise((resolve, reject) => {
+      const cleanup = () => {
+        autoUpdater.removeAllListeners('update-available')
+        autoUpdater.removeAllListeners('update-not-available')
+        autoUpdater.removeAllListeners('download-progress')
+        autoUpdater.removeAllListeners('update-downloaded')
+        autoUpdater.removeAllListeners('error')
+      }
+      autoUpdater.once('update-available', () => {
+        log('Downloading the update package…')
+        autoUpdater.downloadUpdate()
+      })
+      autoUpdater.once('update-not-available', () => {
+        cleanup()
+        reject(new Error('electron-updater reports no newer version for this platform.'))
+      })
+      autoUpdater.on('download-progress', (progress) => {
+        log(`Downloading… ${Math.round(progress.percent)}% (${(progress.bytesPerSecond / 1024).toFixed(0)} KB/s)`)
+      })
+      autoUpdater.once('update-downloaded', () => {
+        cleanup()
+        log('Update package downloaded.')
+        resolve()
+      })
+      autoUpdater.once('error', (error) => {
+        cleanup()
+        reject(error)
+      })
+      autoUpdater.autoDownload = false
+      autoUpdater.checkForUpdates()
+    })
+  }
+
+  /**
+   * User-initiated update, package-based:
+   * - packaged app (dmg/exe from your GitHub release): download the matching
+   *   platform package with progress on the splash, then quit and install.
+   * - development run (`npm start`): there is no installed package to replace,
+   *   so open the release page in the browser for a manual download.
    */
   const beginUpdate = async () => {
     if (updating || quitting) return
     updating = true
     log('Update started (user request)…')
+    if (!app.isPackaged) {
+      const target = lastReleaseUrl !== '' ? lastReleaseUrl : 'https://github.com/'
+      log(`Development mode: opening release page ${target}`)
+      void shell.openExternal(target)
+      updating = false
+      return
+    }
     if (mainWindow !== null && !mainWindow.isDestroyed()) mainWindow.close()
     if (splash === null || splash.isDestroyed()) createSplash()
-    await stopServer()
     try {
-      await applyAppUpdate({ onProgress: log })
-      log('Update complete, relaunching…')
+      await downloadPackage()
+      log('Installing the update…')
+      await stopServer()
+      autoUpdater.quitAndInstall(false, true)
+      return
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       log(`Update failed: ${message}`)
@@ -324,9 +381,9 @@ if (!gotLock) {
         detail: message.slice(-4000),
         buttons: ['重启应用'],
       })
+      app.relaunch()
+      app.exit(0)
     }
-    app.relaunch()
-    app.exit(0)
   }
 
   app.on('second-instance', () => {

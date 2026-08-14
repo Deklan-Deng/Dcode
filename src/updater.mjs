@@ -5,9 +5,10 @@
  * - ensureHarness: make the BUNDLED official harness checkout runnable
  *   (clone / install / build), tracking a build fingerprint so a changed
  *   checkout commit (submodule bump or manual pull) triggers a rebuild.
- * - App self-update: compare THIS desktop app's own version (package.json)
+ * - App self-update check: compare THIS desktop app's own version (package.json)
  *   against the latest GitHub Release of the user's own repository
- *   (update-config.json), and apply it with git pull + npm install.
+ *   (update-config.json). The install itself is package-based and lives in
+ *   main.mjs via electron-updater (dmg on macOS, exe on Windows).
  *
  * The official harness repository is NOT watched for updates: it is a bundled
  * dependency whose version moves with this app's releases.
@@ -277,22 +278,3 @@ export async function checkForAppUpdate({ onProgress = () => {} } = {}) {
   }
 }
 
-/**
- * Apply the app's own update: fast-forward this app's git checkout, reinstall
- * its npm dependencies, and relaunch (caller's job). The bundled harness is
- * rebuilt on the next boot when its build fingerprint no longer matches.
- * Throws with the failing step's output tail on failure.
- */
-export async function applyAppUpdate({ onProgress = () => {} } = {}) {
-  const pull = await run('git', ['pull', '--ff-only'], { cwd: APP_ROOT, onLine: () => {}, timeoutMs: 10 * 60_000 })
-  if (pull.code !== 0) {
-    throw new Error(`git pull --ff-only 失败（本地有改动或未配置 origin）：\n${pull.output.slice(-2000)}`)
-  }
-  onProgress?.('更新桌面应用依赖 (npm install)…')
-  const install = await run('npm', [
-    'install', '--no-audit', '--no-fund', '--cache', path.join(APP_ROOT, '.npm-cache'),
-  ], { cwd: APP_ROOT, onLine: onProgress, timeoutMs: 20 * 60_000 })
-  if (install.code !== 0) {
-    throw new Error(`npm install 失败：\n${install.output.slice(-3000)}`)
-  }
-}

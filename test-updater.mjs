@@ -1,11 +1,12 @@
 /**
- * Standalone test for the updater module: version comparison, release-feed
- * check, and an applyAppUpdate rehearsal (pull + npm install).
+ * Standalone test for the updater module: version comparison and the
+ * release-feed check. (Package installation runs through electron-updater in
+ * the packaged app and is not exercised here.)
  * Run: node test-updater.mjs
  * @module dsh-desktop/test-updater
  */
 
-import { applyAppUpdate, checkForAppUpdate, compareVersions, localAppVersion } from './src/updater.mjs'
+import { checkForAppUpdate, compareVersions, localAppVersion } from './src/updater.mjs'
 
 const cases = [
   ['0.1.0', '0.1.1', -1],
@@ -29,14 +30,3 @@ console.log('local version:', localAppVersion())
 console.log('== checkForAppUpdate (update-config.json repo) ==')
 const check = await checkForAppUpdate({ onProgress: (line) => console.log('[check]', line) })
 console.log('RESULT', JSON.stringify(check, null, 2))
-
-if (check.hasUpdate) {
-  console.log('== applyAppUpdate rehearsal (needs git origin + tracking) ==')
-  try {
-    await applyAppUpdate({ onProgress: (line) => console.log('[apply]', line) })
-    console.log('APPLY OK')
-  } catch (error) {
-    console.error('APPLY FAILED:', error.message)
-    process.exit(1)
-  }
-}

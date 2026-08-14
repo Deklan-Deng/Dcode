@@ -6,13 +6,19 @@
   "private": true,
   "type": "module",
   "main": "src/main.mjs",
+  "repository": "https://github.com/YOUR_NAME/dsh-desktop.git",
   "scripts": {
     "start": "electron .",
     "dist": "electron-builder",
-    "dist:mac": "electron-builder --mac"
+    "dist:mac": "electron-builder --mac",
+    "dist:win": "electron-builder --win",
+    "release": "electron-builder --publish always"
   },
   "devDependencies": {
     "electron": "^37.2.0",
     "electron-builder": "^26.0.12"
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.9"
   }
 }

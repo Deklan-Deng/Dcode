@@ -6,13 +6,24 @@ directories:
   output: dist
   buildResources: build
 
-# The bundled @deepseek-ai/dsh runtime (prod dependency) must ship with the app.
+# The app shell plus the self-update source config. The bundled harness
+# (source + built dist) must also ship; add it before the first packaged build:
+# files:
+#   - harness/**/*
+#   - "!harness/node_modules/**"
 files:
   - src/**/*
   - package.json
+  - update-config.json
   - "!node_modules/.cache/**"
 
 asar: true
+
+# Package-based self-update (electron-updater). The github provider reads the
+# `repository` field in package.json at publish time; set it to your GitHub
+# repo before running `electron-builder --publish always`.
+publish:
+  provider: github
 
 mac:
   category: public.app-category.developer-tools
@@ -20,5 +31,9 @@ mac:
     - dmg
     - zip
   # No icon provided yet: place build/icon.icns to brand the app.
+
+win:
+  target:
+    - nsis
 
 npmRebuild: false

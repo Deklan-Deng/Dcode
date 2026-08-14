@@ -19,16 +19,20 @@
 - 关闭窗口即退出并优雅停止 dsh 子进程（SIGINT → SIGTERM → SIGKILL）。
 - 启动日志：`~/Library/Application Support/DeepSeek Harness Desktop/logs/dsh.log`。
 
-### 自更新（识别的是本应用自己的版本号）
+### 自更新（包更新：mac 的 dmg / win 的 exe）
 
 - 本地版本 = `package.json` 的 `version`；远端版本 = 你 GitHub 仓库的最新 Release tag
   （[`update-config.json`](update-config.json) 里的 `repo`，形如 `your-name/dsh-desktop`）。
   **不是**监听官方 harness 仓库——官方 harness 只是被封装在应用里的依赖，随你的发版一起走。
 - 启动 15 秒后及每 30 分钟检查一次。发现 `latest > version` 时，在 Web GUI
   设置图标的右侧注入一个「更新 vX.Y.Z」胶囊按钮（官方界面改动导致锚点找不到时，
-  回退到窗口右下角），等待你点击。
-- 点击后：关窗 → 停止 dsh → `git pull --ff-only`（你仓库的新代码）→ `npm install` →
-  自动重启应用。重启时若内置 harness 的 commit 变了，按指纹自动重建。
+  回退到窗口右下角），等待你点击，绝不打断任务。
+- 点击后（**打包版**）：electron-updater 按平台下载 Release 里的安装包
+  （macOS 取 dmg，Windows 取 exe/NSIS），下载进度显示在启动画面；下载完成才停止
+  dsh 服务，随后 `quitAndInstall` 自动安装新包并重启应用。重启时若内置 harness
+  的 commit 变了，按指纹自动重建。
+- 点击后（**开发版** `npm start`）：没有已安装的包可替换，自动在浏览器打开
+  Release 页面供手动下载。
 - `update-config.json` 的 `repo` 留空时跳过检查（还没上 GitHub 之前的状态）。
 
 ## 运行（开发模式）
@@ -43,18 +47,24 @@ pnpm 由 corepack 按 harness 锁定的版本自动获取，缓存全收在工�
 
 API Key 等配置与命令行版完全一致：读取环境变量 / `.env` / `~/.dsh`，会话数据共享。
 
-## 上 GitHub 后的发版流程
+## 上 GitHub 后的打包与发版
 
-1. `git remote add origin git@github.com:<your-name>/dsh-desktop.git && git push -u origin main`
-2. 每次发版：
+1. 改 `package.json` 的 `repository` 为你的仓库地址（electron-builder 发布要用），
+   并填写 [`update-config.json`](update-config.json) 的 `repo`。
+2. 打包（macOS 上可出 mac 包；Windows 包建议在 Windows 或 CI 上构建）：
    ```sh
-   npm version patch        # 或 minor / major，自动 bump package.json 版本号
-   git push origin main
-   gh release create v$(node -p "require('./package.json').version") --generate-notes
+   npm run dist:mac    # 产出 dist/*.dmg + *.zip + latest*.yml
+   npm run dist:win    # 产出 dist/*Setup.exe + latest.yml（建议 CI 构建）
    ```
-3. 用户的桌面端检测到新 tag 后，设置右侧出现更新按钮，点击即自动更新重启。
-4. 若要升级内置 harness：更新 `harness/` 到目标 commit（建议以 submodule 方式管理），
-   随发版一起推送；用户更新后首次启动会自动重建。
+3. 发布到 GitHub Release（electron-builder 会自动上传包和更新元数据）：
+   ```sh
+   GH_TOKEN=xxx npm run release    # 等价于 electron-builder --publish always
+   ```
+4. 用户端检测到新 tag 后，设置右侧出现更新按钮，点击即自动下载安装包、安装、重启。
+5. 若要升级内置 harness：更新 `harness/` 到目标 commit（建议以 submodule 方式管理），
+   随发版一起打包；用户更新后首次启动会自动重建。
+6. 注意：未签名（或未公证）的 macOS 包，每次自动更新后可能需在「系统设置 → 隐私与
+   安全性」里允许一次；正式分发建议 Apple Developer 证书签名 + 公证。
 
 ## 项目结构
 
