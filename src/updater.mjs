@@ -163,15 +163,19 @@ const writeHarnessState = (state) => {
  * checkout commit (e.g. the app's release bumped the bundled harness, or a
  * manual pull inside harness/) triggers a fresh install + build; an unchanged
  * commit skips both. Returns true when the harness is runnable.
+ * onStep(id, label, state, detail) reports checklist steps for the splash UI.
  */
-export async function ensureHarness({ onProgress = () => {} } = {}) {
+export async function ensureHarness({ onProgress = () => {}, onStep = () => {} } = {}) {
   if (!harnessExists('.git')) {
     onProgress('内置 harness 缺失，首次引导：克隆官方仓库')
+    onStep('clone', '克隆官方仓库 deepseek-ai/deepseek-harness', 'running')
     const clone = await cloneHarness(onProgress)
     if (clone.code !== 0) {
       onProgress(`克隆失败：${clone.output.slice(-2000)}`)
+      onStep('clone', '克隆官方仓库', 'error', '失败')
       return false
     }
+    onStep('clone', '克隆官方仓库', 'done')
   }
   const head = harnessHead()
   if (head === '') {
@@ -182,20 +186,26 @@ export async function ensureHarness({ onProgress = () => {} } = {}) {
   const commitChanged = state.builtCommit !== head
   if (commitChanged && !harnessExists(PNPM_INSTALL_MARKER)) {
     onProgress('依赖缺失，首次引导：安装依赖')
+    onStep('install', '安装依赖 (pnpm install)', 'running')
     const install = await installHarness(onProgress)
     if (install.code !== 0) {
       onProgress(`依赖安装失败：${install.output.slice(-2000)}`)
+      onStep('install', '安装依赖', 'error', '失败')
       return false
     }
+    onStep('install', '安装依赖', 'done')
   }
   if (commitChanged || !harnessExists(WEB_DIST_INDEX)) {
     onProgress(commitChanged ? '内置 harness 版本变化，重新构建' : '首次引导：构建前端与库')
+    onStep('build', '构建前端与库 (pnpm run build)', 'running')
     const build = await buildHarness(onProgress)
     if (build.code !== 0) {
       onProgress(`构建失败：${build.output.slice(-2000)}`)
+      onStep('build', '构建前端与库', 'error', '失败')
       return false
     }
     writeHarnessState({ builtCommit: head })
+    onStep('build', '构建前端与库', 'done')
   }
   return true
 }
