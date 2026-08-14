@@ -6,7 +6,7 @@
   "private": true,
   "type": "module",
   "main": "src/main.mjs",
-  "repository": "https://github.com/YOUR_NAME/Dcode.git",
+  "repository": "https://github.com/Deklan-Deng/Dcode.git",
   "scripts": {
     "start": "electron .",
     "dist": "electron-builder",
