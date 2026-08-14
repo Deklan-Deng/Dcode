@@ -161,7 +161,7 @@ if (!gotLock) {
     btn.addEventListener('mouseleave', () => { btn.style.background = '#10162a' })
     document.body.appendChild(btn)
     window.__dshUpdateBadge = btn
-    return 'mounted'
+    return anchor === null ? 'mounted-corner' : 'mounted-settings'
   })()`
 
   /** Show the passive update pill next to the GUI's settings icon. */
