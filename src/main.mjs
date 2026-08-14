@@ -418,22 +418,22 @@ if (!gotLock) {
           void probe(
             `(() => { const b = document.querySelector('button[aria-haspopup="dialog"]'); if (!b) return 'no-trigger'; b.click(); return 'clicked-trigger' })()`,
           ).then((r) => log(`Usage test: trigger → ${r}`))
-        }, 4000)
+        }, 7000)
         setTimeout(() => {
           void probe(
             `(() => { const roles = [...document.querySelectorAll('[role]')].map((e) => e.getAttribute('role')); const dialogs = [...document.querySelectorAll('[role="dialog"]')].map((d) => d.textContent.slice(0, 60)); const navs = [...document.querySelectorAll('nav button')].map((b) => b.textContent.trim()); return JSON.stringify({ roles: roles.slice(0, 20), dialogs, navs }) })()`,
           ).then((r) => log(`Usage test: debug → ${r}`))
-        }, 8000)
+        }, 11000)
         setTimeout(() => {
           void probe(
             `(() => { const btn = [...document.querySelectorAll('nav button')].find((b) => b.textContent?.trim() === '用量'); if (!btn) return 'no-nav'; btn.click(); return 'clicked' })()`,
           )
-        }, 10000)
+        }, 13000)
         setTimeout(() => {
           void probe(
             `(() => { const d = document.querySelector('[role="dialog"]'); if (!d) return 'no-dialog'; return d.textContent.includes('Token 用量') ? 'section-with-data' : 'section-missing' })()`,
           ).then((r) => log(`Usage test: section → ${r}`))
-        }, 14000)
+        }, 17000)
       }
       void measureSidebar()
       scheduleSidebarChecks()
