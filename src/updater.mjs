@@ -12,7 +12,7 @@
  *
  * The official harness repository is NOT watched for updates: it is a bundled
  * dependency whose version moves with this app's releases.
- * @module dsh-desktop/updater
+ * @module dcode/updater
  */
 
 import { spawn, spawnSync } from 'node:child_process'
@@ -258,7 +258,7 @@ export async function checkForAppUpdate({ onProgress = () => {} } = {}) {
   }
   try {
     const response = await fetch(`https://api.github.com/repos/${repo}/releases/latest`, {
-      headers: { 'User-Agent': 'dsh-desktop', Accept: 'application/vnd.github+json' },
+      headers: { 'User-Agent': 'dcode-desktop', Accept: 'application/vnd.github+json' },
     })
     if (!response.ok) return { configured: true, error: `GitHub API ${response.status}` }
     const data = await response.json()

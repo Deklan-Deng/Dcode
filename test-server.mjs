@@ -2,7 +2,7 @@
  * Standalone smoke test for server.mjs: boot the bundled dsh web server,
  * verify the readiness URL answers HTTP, then stop cleanly.
  * Run: node test-server.mjs
- * @module dsh-desktop/test-server
+ * @module dcode/test-server
  */
 
 import http from 'node:http'

@@ -6,7 +6,7 @@
  * the user's repository (update-config.json). A newer version shows a passive
  * "更新 vX.Y.Z" button next to the GUI's settings icon — nothing happens until
  * the user clicks, so running tasks are never interrupted.
- * @module dsh-desktop/main
+ * @module dcode/main
  */
 
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
@@ -22,7 +22,7 @@ import { checkForAppUpdate, ensureHarness } from './updater.mjs'
 const { autoUpdater } = updaterModule
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
-const APP_NAME = 'DeepSeek Harness Desktop'
+const APP_NAME = 'Dcode'
 
 app.setName(APP_NAME)
 

@@ -3,7 +3,7 @@
  * release-feed check. (Package installation runs through electron-updater in
  * the packaged app and is not exercised here.)
  * Run: node test-updater.mjs
- * @module dsh-desktop/test-updater
+ * @module dcode/test-updater
  */
 
 import { checkForAppUpdate, compareVersions, localAppVersion } from './src/updater.mjs'

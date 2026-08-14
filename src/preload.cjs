@@ -6,7 +6,7 @@
  *
  * Kept as CommonJS: sandboxed preloads (webPreferences.sandbox = true) do not
  * run in an ESM context.
- * @module dsh-desktop/preload
+ * @module dcode/preload
  */
 
 const { contextBridge, ipcRenderer } = require('electron')

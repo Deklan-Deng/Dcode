@@ -1,7 +1,7 @@
 /**
  * dsh server management: spawns the bundled deepseek-harness checkout's `web`
  * profile, watches its readiness line, and stops it cleanly on quit.
- * @module dsh-desktop/server
+ * @module dcode/server
  */
 
 import { spawn, execFile } from 'node:child_process'

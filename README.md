@@ -1,6 +1,6 @@
-# DeepSeek Harness Desktop
+# Dcode
 
-类似 Codex 桌面端的 DeepSeek Harness 桌面外壳：**内置完整 harness 源码本体**，
+Dcode 是类似 Codex 桌面端的 DeepSeek Harness 桌面外壳：**内置完整 harness 源码本体**，
 一条命令启动，自动拉起 `dsh web` 并在原生窗口打开 Web GUI；桌面应用有**自己的版本号**，
 监听**你自己的 GitHub Releases**，发现新版本时在界面设置图标的右侧出现一个
 「更新 vX.Y.Z」按钮——**只有你点击它，才会执行更新并重启**，绝不打断正在进行的任务。
@@ -18,12 +18,12 @@
   pull 了官方代码）就自动重新构建；若依赖安装标记（`node_modules/.modules.yaml`）
   缺失，会先重装依赖再构建。
 - 关闭窗口即退出并优雅停止 dsh 子进程（SIGINT → SIGTERM → SIGKILL）。
-- 启动日志：`~/Library/Application Support/DeepSeek Harness Desktop/logs/dsh.log`。
+- 启动日志：`~/Library/Application Support/Dcode/logs/dsh.log`。
 
 ### 自更新（包更新：mac 的 dmg / win 的 exe）
 
 - 本地版本 = `package.json` 的 `version`；远端版本 = 你 GitHub 仓库的最新 Release tag
-  （[`update-config.json`](update-config.json) 里的 `repo`，形如 `your-name/dsh-desktop`）。
+  （[`update-config.json`](update-config.json) 里的 `repo`，形如 `your-name/Dcode`）。
   **不是**监听官方 harness 仓库——官方 harness 只是被封装在应用里的依赖，随你的发版一起走。
 - 启动 15 秒后及每 30 分钟检查一次。发现 `latest > version` 时，在 Web GUI
   设置图标的右侧注入一个「更新 vX.Y.Z」胶囊按钮（官方界面改动导致锚点找不到时，
@@ -83,7 +83,7 @@ src/updater.mjs     harness 引导（克隆/安装/构建指纹）＋ 应用自�
                     （GitHub Releases 抓取、版本对比）
 src/preload.cjs     contextBridge：启动画面状态/退出、更新按钮点击桥接
 src/splash.html     启动画面（状态 + 失败日志 + 退出按钮）
-update-config.json  自更新源配置：{"repo": "your-name/dsh-desktop"}
+update-config.json  自更新源配置：{"repo": "your-name/Dcode"}
 .harness-state.json 构建指纹（记录当前构建对应的 harness commit，自动生成）
 test-server.mjs     dsh 启动冒烟测试（node test-server.mjs）
 test-updater.mjs    版本比较 + Releases 检查演练（node test-updater.mjs；

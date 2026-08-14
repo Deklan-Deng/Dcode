@@ -1,12 +1,12 @@
 {
-  "name": "dsh-desktop",
+  "name": "dcode",
   "version": "0.1.0",
-  "description": "DeepSeek Harness desktop shell: one-click launcher for the dsh Web GUI, no terminal needed.",
+  "description": "Dcode: one-click desktop shell for the DeepSeek Harness web GUI, no terminal needed.",
   "license": "MIT",
   "private": true,
   "type": "module",
   "main": "src/main.mjs",
-  "repository": "https://github.com/YOUR_NAME/dsh-desktop.git",
+  "repository": "https://github.com/YOUR_NAME/Dcode.git",
   "scripts": {
     "start": "electron .",
     "dist": "electron-builder",
