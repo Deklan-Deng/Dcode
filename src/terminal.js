@@ -24,6 +24,7 @@
 
   const tabs = new Map() // id -> { id, name, term, fit, search, pane, btn, label, exited }
   let activeId = null
+  let workspaces = [] // [{ path, title }] from ~/.dsh, newest first
 
   const termHost = document.getElementById('term')
   const tabsEl = document.getElementById('tabs')
@@ -69,17 +70,29 @@
   })
 
   const shellButton = document.getElementById('shellmenu')
+  const shellMenuItems = () => [
+    ...SHELL_KINDS.map((kind) => ({
+      label: kind.label,
+      action: () => window.dshDesktop.termNew({ kind: kind.value }),
+    })),
+    ...(workspaces.length > 0
+      ? [
+          'sep',
+          ...workspaces.map((workspace) => ({
+            label: `在 “${workspace.title}” 打开`,
+            action: () => window.dshDesktop.termNew({ kind: 'default', cwd: workspace.path }),
+          })),
+        ]
+      : []),
+    'sep',
+    {
+      label: '在个人目录打开',
+      action: () => window.dshDesktop.termNew({ kind: 'default', cwd: '~' }),
+    },
+  ]
   shellButton.addEventListener('click', () => {
     const rect = shellButton.getBoundingClientRect()
-    openMenu(
-      shellButton,
-      SHELL_KINDS.map((kind) => ({
-        label: kind.label,
-        action: () => window.dshDesktop.termNew(kind.value),
-      })),
-      rect.left,
-      rect.bottom + 4,
-    )
+    openMenu(shellButton, shellMenuItems(), rect.left, rect.bottom + 4)
   })
 
   // -------------------------------------------------------------------------
@@ -195,6 +208,19 @@
     entry.term.focus()
   }
 
+  function removeTab(id) {
+    const entry = tabs.get(id)
+    if (entry === undefined) return
+    entry.pane.remove()
+    entry.btn.remove()
+    tabs.delete(id)
+    if (activeId === id) {
+      const remaining = [...tabs.keys()]
+      activeId = null
+      if (remaining.length > 0) activate(remaining[0])
+    }
+  }
+
   function fitActive() {
     const entry = tabs.get(activeId)
     if (entry === undefined) return
@@ -243,12 +269,12 @@
   // -------------------------------------------------------------------------
   // Shortcuts + header controls
   // -------------------------------------------------------------------------
-  document.getElementById('newtab').addEventListener('click', () => window.dshDesktop.termNew('default'))
+  document.getElementById('newtab').addEventListener('click', () => window.dshDesktop.termNew({ kind: 'default' }))
   document.addEventListener('keydown', (event) => {
     const key = event.key.toLowerCase()
     if ((event.metaKey || event.ctrlKey) && key === 't') {
       event.preventDefault()
-      window.dshDesktop.termNew('default')
+      window.dshDesktop.termNew({ kind: 'default' })
     }
     if ((event.metaKey || event.ctrlKey) && key === 'f') {
       event.preventDefault()
@@ -275,6 +301,12 @@
   // and createTab returns a live xterm object that cannot be cloned.
   window.dshDesktop.termOnTab(({ id, name }) => {
     createTab(id, name, false)
+  })
+  window.dshDesktop.termOnTabClosed(({ id }) => {
+    removeTab(id)
+  })
+  window.dshDesktop.termOnWorkspaces((list) => {
+    workspaces = Array.isArray(list) ? list : []
   })
   window.dshDesktop.termOnData(({ id, data }) => {
     const entry = tabs.get(id)

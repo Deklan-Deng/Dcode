@@ -35,9 +35,11 @@ contextBridge.exposeInMainWorld('dshDesktop', {
   // Terminal panel bridge (xterm.js <-> node-pty sessions in the main process).
   termOnTabs: subscribe('term:tabs'),
   termOnTab: subscribe('term:tab'),
+  termOnTabClosed: subscribe('term:tab-closed'),
+  termOnWorkspaces: subscribe('term:workspaces'),
   termOnData: subscribe('term:data'),
   termOnExit: subscribe('term:exit'),
-  termNew: (kind) => ipcRenderer.send('term:new', kind),
+  termNew: (payload) => ipcRenderer.send('term:new', payload),
   termActivate: (id) => ipcRenderer.send('term:activate', id),
   termCloseTab: (id) => ipcRenderer.send('term:close-tab', id),
   termInput: (data) => ipcRenderer.send('term:input', data),

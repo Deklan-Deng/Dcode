@@ -13,6 +13,7 @@
  */
 
 import { ipcMain, screen, shell, WebContentsView } from 'electron'
+import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -48,6 +49,34 @@ const pickShell = (kind) => {
   return SHELL_FILES[String(kind)] || process.env.SHELL || '/bin/zsh'
 }
 
+/** Workspaces known to dsh (~/.dsh/storages/workspace.json), newest first. */
+const readWorkspaces = () => {
+  try {
+    const file = path.join(os.homedir(), '.dsh', 'storages', 'workspace.json')
+    const data = JSON.parse(fs.readFileSync(file, 'utf8'))
+    const tables = data.tables?.workspaces ?? {}
+    return Object.values(tables)
+      .map((workspace) => {
+        const dir = String(workspace.path ?? '')
+        return {
+          path: dir,
+          title: String(workspace.title ?? path.basename(dir) ?? dir),
+          updatedAt: String(workspace.updatedAt ?? ''),
+        }
+      })
+      .filter((workspace) => workspace.path !== '' && fs.existsSync(workspace.path))
+      .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1))
+  } catch {
+    return []
+  }
+}
+
+/** Where new terminals open: the most recently used dsh workspace, else home. */
+const defaultCwd = () => {
+  const newest = readWorkspaces()[0]
+  return newest !== undefined ? newest.path : os.homedir()
+}
+
 /** Lay the two views out: GUI on top, terminal panel at the bottom. */
 export function layoutTerminalPanel() {
   if (mainWindow === null || mainWindow.isDestroyed() || guiView === null) return
@@ -78,8 +107,11 @@ const sessionNameFor = (file) => {
   return same === 0 ? base : `${base} (${same + 1})`
 }
 
-function spawnSession(kind = 'default') {
+function spawnSession(kind = 'default', cwd) {
   const file = pickShell(kind)
+  let sessionCwd = defaultCwd()
+  if (cwd === '~') sessionCwd = os.homedir()
+  else if (typeof cwd === 'string' && cwd !== '' && fs.existsSync(cwd)) sessionCwd = cwd
   const session = {
     id: String(nextSessionId++),
     pty: null,
@@ -95,7 +127,7 @@ function spawnSession(kind = 'default') {
       name: 'xterm-256color',
       cols: 100,
       rows: 30,
-      cwd: os.homedir(),
+      cwd: sessionCwd,
       env: { ...process.env, TERM: 'xterm-256color' },
     })
   } catch (error) {
@@ -153,6 +185,7 @@ const registerIpc = () => {
       'term:tabs',
       [...sessions.values()].map((s) => ({ id: s.id, name: s.name, exited: s.exited })),
     )
+    event.sender.send('term:workspaces', readWorkspaces())
     for (const session of sessions.values()) {
       if (session.buffer.length > 0) {
         const buffered = session.buffer.join('')
@@ -161,14 +194,18 @@ const registerIpc = () => {
       }
     }
   })
-  ipcMain.on('term:new', (_event, kind) => {
-    spawnSession(kind === undefined ? 'default' : String(kind))
+  ipcMain.on('term:new', (_event, payload) => {
+    const kind = typeof payload === 'string' ? payload : payload?.kind
+    const cwd = typeof payload === 'object' && payload !== null ? payload.cwd : undefined
+    spawnSession(kind === undefined ? 'default' : String(kind), cwd)
   })
   ipcMain.on('term:activate', (_event, id) => {
     if (sessions.has(String(id))) activeId = String(id)
   })
   ipcMain.on('term:close-tab', (_event, id) => {
     killSession(String(id))
+    sendToPanel('term:tab-closed', { id: String(id) })
+    // The last tab closing takes the whole panel down with it.
     if (sessions.size === 0) closeTerminalPanel()
   })
   ipcMain.on('term:input', (_event, data) => {
@@ -248,7 +285,8 @@ export function openTerminalPanel(win, gui) {
   layoutTerminalPanel()
   terminalView.webContents.focus()
 
-  // Test hook: click the "+" tab button, then run a command in the second tab.
+  // Test hook: click "+", run a command in the second tab, then close every
+  // tab through the real × UI — the last one must auto-close the panel.
   if (process.env.DSH_DESKTOP_TERM_TEST === '1') {
     setTimeout(() => {
       void terminalView.webContents.executeJavaScript(
@@ -260,6 +298,11 @@ export function openTerminalPanel(win, gui) {
           session.pty.write('echo SECOND_TAB_OK && exit\r')
         }
       }, 1200)
+      setTimeout(() => {
+        void terminalView.webContents.executeJavaScript(
+          "document.querySelectorAll('.tab .close').forEach((el) => el.click())",
+        )
+      }, 4500)
     }, 3000)
   }
 }
