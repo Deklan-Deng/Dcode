@@ -9,6 +9,5 @@ pack/
 .pnpm-cache/
 .corepack/
 .harness-state.json
-harness/
 *.log
 .DS_Store
