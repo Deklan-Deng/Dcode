@@ -1,0 +1,24 @@
+appId: dev.dsh.desktop
+productName: DeepSeek Harness Desktop
+copyright: MIT
+
+directories:
+  output: dist
+  buildResources: build
+
+# The bundled @deepseek-ai/dsh runtime (prod dependency) must ship with the app.
+files:
+  - src/**/*
+  - package.json
+  - "!node_modules/.cache/**"
+
+asar: true
+
+mac:
+  category: public.app-category.developer-tools
+  target:
+    - dmg
+    - zip
+  # No icon provided yet: place build/icon.icns to brand the app.
+
+npmRebuild: false

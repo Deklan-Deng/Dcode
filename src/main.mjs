@@ -1,0 +1,368 @@
+/**
+ * Electron main process: single-instance shell that boots the bundled dsh web
+ * server, shows a splash while it starts, then hosts the Web GUI in one window.
+ *
+ * Self-update: the app watches ITS OWN version against the GitHub Releases of
+ * the user's repository (update-config.json). A newer version shows a passive
+ * "更新 vX.Y.Z" button next to the GUI's settings icon — nothing happens until
+ * the user clicks, so running tasks are never interrupted.
+ * @module dsh-desktop/main
+ */
+
+import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
+import fs from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { startServer } from './server.mjs'
+import { applyAppUpdate, checkForAppUpdate, ensureHarness } from './updater.mjs'
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
+const APP_NAME = 'DeepSeek Harness Desktop'
+
+app.setName(APP_NAME)
+
+// One app instance hosts one server; a second launch focuses the first window.
+const gotLock = app.requestSingleInstanceLock()
+if (!gotLock) {
+  app.quit()
+} else {
+  let serverHandle = null
+  let pendingServer = null
+  let quitting = false
+  let updating = false
+  let splash = null
+  let mainWindow = null
+  let updateTimer = null
+  let lastUpdateVersion = null
+
+  const logDir = path.join(app.getPath('userData'), 'logs')
+  const logFile = path.join(logDir, 'dsh.log')
+
+  /** Route a status line to the splash (when alive), the log file, and stdout. */
+  const log = (text) => {
+    const line = `[${new Date().toISOString()}] ${text}\n`
+    try {
+      fs.mkdirSync(logDir, { recursive: true })
+      fs.appendFileSync(logFile, line)
+    } catch {
+      // Logging must never take the app down.
+    }
+    if (splash !== null && !splash.isDestroyed()) {
+      splash.webContents.send('dsh:status', text)
+    }
+    console.log(line.trimEnd())
+  }
+
+  const sendFailure = (message) => {
+    if (splash !== null && !splash.isDestroyed()) {
+      splash.webContents.send('dsh:failure', message)
+    }
+  }
+
+  const createSplash = () => {
+    splash = new BrowserWindow({
+      width: 440,
+      height: 300,
+      resizable: false,
+      frame: false,
+      transparent: false,
+      backgroundColor: '#0b0e14',
+      alwaysOnTop: true,
+      show: false,
+      webPreferences: {
+        preload: path.join(__dirname, 'preload.cjs'),
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: true,
+      },
+    })
+    splash.loadFile(path.join(__dirname, 'splash.html'))
+    splash.once('ready-to-show', () => splash.show())
+    splash.on('closed', () => {
+      splash = null
+    })
+  }
+
+  /**
+   * The badge script injected into the Web GUI: anchors a pill button to the
+   * right of the settings trigger (the sidebar-foot `button[aria-haspopup="dialog"]`),
+   * falls back to the window corner when the anchor cannot be found, and keeps
+   * re-positioning while the GUI re-renders. Clicking asks the desktop shell
+   * (preload bridge) to run the update.
+   */
+  const badgeScript = (version) => `(() => {
+    const version = ${JSON.stringify(version)}
+    if (window.__dshUpdateBadge !== undefined) {
+      if (window.__dshUpdateBadge.dataset.version === version) return 'exists'
+      window.__dshUpdateBadge.dataset.version = version
+      window.__dshUpdateBadge.lastChild.textContent = version
+      return 'exists'
+    }
+    const pickAnchor = () => {
+      let best = null
+      for (const el of document.querySelectorAll('button[aria-haspopup="dialog"]')) {
+        const r = el.getBoundingClientRect()
+        if (r.width === 0 && r.height === 0) continue
+        if (r.left < 420 && r.top > window.innerHeight * 0.4) {
+          if (best === null || r.left < best.left) best = el
+        }
+      }
+      return best
+    }
+    const btn = document.createElement('button')
+    btn.type = 'button'
+    btn.id = 'dsh-update-badge'
+    btn.dataset.version = version
+    btn.style.cssText = [
+      'position:fixed', 'z-index:2147483000', 'cursor:pointer',
+      'display:inline-flex', 'align-items:center', 'gap:7px',
+      'padding:6px 12px', 'border-radius:999px',
+      'border:1px solid rgba(77,107,254,.6)',
+      'background:#10162a', 'color:#a9bdff',
+      'font-size:12px', 'font-weight:600', 'line-height:1',
+      'box-shadow:0 2px 14px rgba(0,0,0,.45)',
+      'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif',
+      'white-space:nowrap',
+    ].join(';')
+    const dot = document.createElement('span')
+    dot.style.cssText = 'width:7px;height:7px;border-radius:50%;background:#4d6bfe;flex:none;'
+    const label = document.createElement('span')
+    label.textContent = version
+    btn.append(dot)
+    btn.append(document.createTextNode('更新 v'))
+    btn.append(label)
+    btn.title = '官方有新版本，点击更新并重启应用'
+    let anchor = null
+    const position = () => {
+      const candidate = pickAnchor()
+      if (candidate !== null) anchor = candidate
+      if (anchor === null || !document.contains(anchor)) {
+        btn.style.left = 'auto'
+        btn.style.top = 'auto'
+        btn.style.right = '18px'
+        btn.style.bottom = '18px'
+        btn.style.transform = 'none'
+        return
+      }
+      const r = anchor.getBoundingClientRect()
+      btn.style.right = 'auto'
+      btn.style.bottom = 'auto'
+      btn.style.left = Math.round(r.right + 10) + 'px'
+      btn.style.top = Math.round(r.top + r.height / 2) + 'px'
+      btn.style.transform = 'translateY(-50%)'
+    }
+    position()
+    window.addEventListener('resize', position)
+    setInterval(position, 3000)
+    btn.addEventListener('click', () => {
+      if (window.dshDesktop !== undefined) window.dshDesktop.beginUpdate()
+    })
+    btn.addEventListener('mouseenter', () => { btn.style.background = '#1a2444' })
+    btn.addEventListener('mouseleave', () => { btn.style.background = '#10162a' })
+    document.body.appendChild(btn)
+    window.__dshUpdateBadge = btn
+    return 'mounted'
+  })()`
+
+  /** Show the passive update pill next to the GUI's settings icon. */
+  const showUpdateBadge = (version) => {
+    if (mainWindow === null || mainWindow.isDestroyed()) return
+    lastUpdateVersion = version
+    mainWindow.webContents
+      .executeJavaScript(badgeScript(version), true)
+      .then((result) => log(`Update badge: ${String(result)} (v${version})`))
+      .catch((error) => log(`Update badge injection failed: ${String(error)}`))
+  }
+
+  const createMainWindow = (url) => {
+    mainWindow = new BrowserWindow({
+      width: 1320,
+      height: 860,
+      minWidth: 900,
+      minHeight: 600,
+      show: false,
+      title: APP_NAME,
+      backgroundColor: '#0b0e14',
+      webPreferences: {
+        preload: path.join(__dirname, 'preload.cjs'),
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: true,
+      },
+    })
+    mainWindow.once('ready-to-show', () => mainWindow.show())
+    mainWindow.on('closed', () => {
+      mainWindow = null
+    })
+
+    // Keep the GUI inside the app: same-origin navigations load in-window,
+    // external http(s) links open in the default browser.
+    const serverOrigin = new URL(url).origin
+    mainWindow.webContents.setWindowOpenHandler(({ url: target }) => {
+      if (target.startsWith('http://') || target.startsWith('https://')) {
+        if (target.startsWith(serverOrigin)) return { action: 'allow' }
+        void shell.openExternal(target)
+      }
+      return { action: 'deny' }
+    })
+    mainWindow.webContents.on('will-navigate', (event, target) => {
+      if (!target.startsWith(serverOrigin)) {
+        event.preventDefault()
+        if (target.startsWith('http://') || target.startsWith('https://')) {
+          void shell.openExternal(target)
+        }
+      }
+    })
+
+    mainWindow.webContents.on('console-message', ({ level, message }) => {
+      if (level === 'error') log(`[renderer] ${message}`)
+    })
+    mainWindow.webContents.on('did-fail-load', (_event, code, description, validatedUrl) => {
+      log(`Main window failed to load ${validatedUrl} (${code}): ${description}`)
+    })
+    mainWindow.webContents.on('did-finish-load', () => {
+      log('Main window loaded.')
+      // A reload wipes injected DOM; restore the badge when an update is pending.
+      if (lastUpdateVersion !== null) showUpdateBadge(lastUpdateVersion)
+    })
+
+    void mainWindow.loadURL(url)
+  }
+
+  const bootServer = async () => {
+    log('Starting DeepSeek Harness (dsh web)…')
+    pendingServer = startServer({ log, logFile })
+    let handle
+    try {
+      handle = await pendingServer
+    } catch (error) {
+      pendingServer = null
+      const message = error instanceof Error ? error.message : String(error)
+      log(`Server failed: ${message}`)
+      sendFailure(message)
+      return
+    }
+    pendingServer = null
+    serverHandle = handle
+    if (quitting) {
+      // Quit was requested while the server was still booting.
+      await handle.stop()
+      return
+    }
+    createMainWindow(handle.url)
+    if (splash !== null && !splash.isDestroyed()) splash.close()
+  }
+
+  const stopServer = async () => {
+    // A boot still in flight has no handle yet; wait for it, then stop it.
+    if (pendingServer !== null) {
+      try {
+        serverHandle = await pendingServer
+      } catch {
+        serverHandle = null
+      }
+      pendingServer = null
+    }
+    const handle = serverHandle
+    serverHandle = null
+    if (handle !== undefined) {
+      log('Stopping dsh server…')
+      await handle.stop()
+    }
+  }
+
+  /** Poll the app's own release feed; on a newer version show the passive badge. */
+  const runUpdateCheck = async () => {
+    if (updating || quitting) return
+    // Test hook: force the badge without touching version state.
+    if (process.env.DSH_DESKTOP_FORCE_UPDATE === '1') {
+      showUpdateBadge('9.9.9-test')
+      return
+    }
+    log('Checking for a newer desktop app version…')
+    const result = await checkForAppUpdate({ onProgress: log })
+    if (!result.configured) return
+    if (result.error !== undefined) {
+      log(`Update check failed: ${result.error}`)
+      return
+    }
+    if (result.hasUpdate) {
+      log(`New version available: ${result.latest} (current ${result.current})`)
+      showUpdateBadge(result.latest)
+    } else {
+      log(`App is up to date (${result.current}).`)
+    }
+  }
+
+  /** Start the update watcher: one early check plus a check every 30 minutes. */
+  const scheduleUpdateChecks = () => {
+    updateTimer = setInterval(() => void runUpdateCheck(), 30 * 60_000)
+    setTimeout(() => void runUpdateCheck(), 15_000)
+  }
+
+  /**
+   * User-initiated update: stop the server, pull this app's own repository,
+   * reinstall dependencies, and relaunch. The splash reports progress.
+   */
+  const beginUpdate = async () => {
+    if (updating || quitting) return
+    updating = true
+    log('Update started (user request)…')
+    if (mainWindow !== null && !mainWindow.isDestroyed()) mainWindow.close()
+    if (splash === null || splash.isDestroyed()) createSplash()
+    await stopServer()
+    try {
+      await applyAppUpdate({ onProgress: log })
+      log('Update complete, relaunching…')
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      log(`Update failed: ${message}`)
+      await dialog.showMessageBox(splash, {
+        type: 'error',
+        title: '更新失败',
+        message: '更新失败，应用将重启回当前状态',
+        detail: message.slice(-4000),
+        buttons: ['重启应用'],
+      })
+    }
+    app.relaunch()
+    app.exit(0)
+  }
+
+  app.on('second-instance', () => {
+    if (mainWindow !== null) {
+      if (mainWindow.isMinimized()) mainWindow.restore()
+      mainWindow.focus()
+    }
+  })
+
+  ipcMain.on('dsh:quit', () => app.quit())
+  ipcMain.on('dsh:update', () => void beginUpdate())
+
+  app.whenReady().then(() => {
+    createSplash()
+    void (async () => {
+      log('Checking the bundled deepseek-harness…')
+      const ready = await ensureHarness({ onProgress: log })
+      if (!ready) {
+        sendFailure('Bundled harness bootstrap failed. See the log above.')
+        return
+      }
+      await bootServer()
+      if (serverHandle !== null) scheduleUpdateChecks()
+    })()
+  })
+
+  // The server lives and dies with the app: closing the window quits.
+  app.on('window-all-closed', () => {
+    app.quit()
+  })
+
+  app.on('before-quit', (event) => {
+    if (quitting) return
+    event.preventDefault()
+    quitting = true
+    if (updateTimer !== null) clearInterval(updateTimer)
+    void stopServer().finally(() => app.quit())
+  })
+}

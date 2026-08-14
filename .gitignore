@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.npm-cache/
+.electron-cache/
+.electron-dl/
+.pnpm-store/
+.pnpm-cache/
+.corepack/
+.harness-state.json
+harness/
+*.log
+.DS_Store
